@@ -13,7 +13,7 @@ import (
 const (
 	baseURL          = "https://x.com"
 	graphqlBase      = "https://x.com/i/api/graphql"
-	bearerToken      = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+	bearerToken      = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 	defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 	defaultMinGap    = 1 * time.Second
 	defaultMaxRetries = 3
@@ -39,6 +39,14 @@ var defaultQueryIDs = map[string]string{
 	"ListMembers":              "oZLcyjKOfXBf2Jln31YXPw",
 	"ListMemberships":          "en6N7nVkbafxIMQa8ef2DA",
 	"Viewer":                   "k3YiLNE_MAy5J-NANLERUg",
+	"CreateTweet":              "zkcFc6F-RKRgWN8HUkJfZg",
+	"DeleteTweet":              "nxpZCY2K-I6QoFHAHeojFQ",
+	"FavoriteTweet":            "lI07N6Otwv1PhnEgXILM7A",
+	"UnfavoriteTweet":          "ZYKSe-w7KEslx3JhSIk5LA",
+	"CreateRetweet":            "mbRO74GrOvSfRcJnlMapnQ",
+	"DeleteRetweet":            "ZyZigVsNiFO6v1dEks1eWg",
+	"CreateBookmark":           "aoDbu3RHznuiSkQ9aNM67Q",
+	"DeleteBookmark":           "Wlmlj2-xzyS1GN3a6cj-mQ",
 }
 
 // defaultFeatures is the standard features map sent with every GraphQL request.

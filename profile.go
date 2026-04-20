@@ -31,6 +31,9 @@ func (c *Client) GetProfile(ctx context.Context, screenName string) (*User, erro
 		return nil, fmt.Errorf("%w: decoding profile: %v", ErrRequestFailed, err)
 	}
 
+	if data.User.Result.Typename == "UserUnavailable" {
+		return nil, ErrSuspended
+	}
 	if data.User.Result.RestID == "" {
 		return nil, ErrNotFound
 	}
@@ -64,6 +67,9 @@ func (c *Client) GetProfileByID(ctx context.Context, userID string) (*User, erro
 		return nil, fmt.Errorf("%w: decoding profile: %v", ErrRequestFailed, err)
 	}
 
+	if data.User.Result.Typename == "UserUnavailable" {
+		return nil, ErrSuspended
+	}
 	if data.User.Result.RestID == "" {
 		return nil, ErrNotFound
 	}

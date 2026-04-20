@@ -80,17 +80,14 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 	detail := &TweetDetail{}
 	for _, inst := range tl.Instructions {
 		for _, entry := range inst.Entries {
-			// Focal tweet entry
-			if tweet, ok := extractTweetFromEntry(entry); ok && tweet.ID == tweetID {
-				detail.Tweet = tweet
-				continue
-			}
-			// Reply tweet entries
 			if tweet, ok := extractTweetFromEntry(entry); ok && tweet.ID != "" {
-				detail.Replies = append(detail.Replies, tweet)
+				if tweet.ID == tweetID {
+					detail.Tweet = tweet
+				} else {
+					detail.Replies = append(detail.Replies, tweet)
+				}
 				continue
 			}
-			// Conversation module entries (replies grouped in modules)
 			for _, item := range entry.Content.Items {
 				if item.Item.ItemContent.TweetResults != nil {
 					tw := toTweet(item.Item.ItemContent.TweetResults.Result)
