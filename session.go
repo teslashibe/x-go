@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// validateSession calls the Viewer query to verify auth and cache the
-// authenticated user's profile.
+// validateSession calls the Viewer query to verify auth, then fetches the
+// full profile via UserByRestId to populate all fields.
 func (c *Client) validateSession(ctx context.Context) error {
 	vars := map[string]interface{}{
 		"withCommunitiesMemberships": true,
@@ -27,7 +27,9 @@ func (c *Client) validateSession(ctx context.Context) error {
 	var data struct {
 		Viewer struct {
 			UserResults struct {
-				Result userObj `json:"result"`
+				Result struct {
+					RestID string `json:"rest_id"`
+				} `json:"result"`
 			} `json:"user_results"`
 		} `json:"viewer"`
 	}
@@ -35,17 +37,39 @@ func (c *Client) validateSession(ctx context.Context) error {
 		return fmt.Errorf("%w: decoding viewer: %v", ErrUnauthorized, err)
 	}
 
-	if data.Viewer.UserResults.Result.RestID == "" {
+	viewerID := data.Viewer.UserResults.Result.RestID
+	if viewerID == "" {
 		return ErrUnauthorized
 	}
 
-	u := toUser(data.Viewer.UserResults.Result)
-	c.viewer = &u
-
 	if c.restID == "" {
-		c.restID = u.ID
+		c.restID = viewerID
 	}
 
+	// Fetch full profile — the Viewer query only returns partial fields.
+	profileVars := map[string]interface{}{
+		"userId":                   viewerID,
+		"withSafetyModeUserFields": true,
+	}
+	profileRaw, err := c.graphqlGET(ctx, "UserByRestId", profileVars)
+	if err != nil {
+		// Auth is valid (Viewer succeeded); cache a minimal User.
+		c.viewer = &User{ID: viewerID}
+		return nil
+	}
+
+	var profileData struct {
+		User struct {
+			Result userObj `json:"result"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(profileRaw, &profileData); err != nil {
+		c.viewer = &User{ID: viewerID}
+		return nil
+	}
+
+	u := toUser(profileData.User.Result)
+	c.viewer = &u
 	return nil
 }
 

@@ -158,6 +158,22 @@ type userObj struct {
 	RestID         string     `json:"rest_id"`
 	Legacy         userLegacy `json:"legacy"`
 	IsBlueVerified bool       `json:"is_blue_verified"`
+	Core           *userCore  `json:"core"`
+	Avatar         *struct {
+		ImageURL string `json:"image_url"`
+	} `json:"avatar"`
+	Location   *struct {
+		Location string `json:"location"`
+	} `json:"location"`
+	ProfileBio *struct {
+		Description string `json:"description"`
+	} `json:"profile_bio"`
+}
+
+type userCore struct {
+	ScreenName string `json:"screen_name"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"created_at"`
 }
 
 type userLegacy struct {
@@ -206,10 +222,35 @@ func toUser(o userObj) User {
 		PinnedTweetIDs:  o.Legacy.PinnedTweetIDsStr,
 	}
 
-	if o.Legacy.CreatedAt != "" {
+	// X has moved core profile fields out of legacy into top-level objects.
+	// Prefer the new locations, fall back to legacy for older responses.
+	if o.Core != nil {
+		if o.Core.ScreenName != "" {
+			u.ScreenName = o.Core.ScreenName
+		}
+		if o.Core.Name != "" {
+			u.Name = o.Core.Name
+		}
+		if o.Core.CreatedAt != "" {
+			if t, err := time.Parse(xDateFormat, o.Core.CreatedAt); err == nil {
+				u.CreatedAt = t
+			}
+		}
+	}
+	if u.CreatedAt.IsZero() && o.Legacy.CreatedAt != "" {
 		if t, err := time.Parse(xDateFormat, o.Legacy.CreatedAt); err == nil {
 			u.CreatedAt = t
 		}
+	}
+
+	if o.Avatar != nil && o.Avatar.ImageURL != "" {
+		u.ProfileImageURL = o.Avatar.ImageURL
+	}
+	if o.Location != nil && o.Location.Location != "" {
+		u.Location = o.Location.Location
+	}
+	if o.ProfileBio != nil && o.ProfileBio.Description != "" {
+		u.Description = o.ProfileBio.Description
 	}
 
 	if o.Legacy.Entities != nil && o.Legacy.Entities.URL != nil {
@@ -272,10 +313,11 @@ func toTweet(o tweetObj) Tweet {
 		}
 	}
 
-	// Author from core.user_results
-	t.AuthorID = o.Core.UserResults.Result.RestID
-	t.AuthorScreenName = o.Core.UserResults.Result.Legacy.ScreenName
-	t.AuthorName = o.Core.UserResults.Result.Legacy.Name
+	// Author from core.user_results — use toUser to handle both legacy and new field locations
+	author := toUser(o.Core.UserResults.Result)
+	t.AuthorID = author.ID
+	t.AuthorScreenName = author.ScreenName
+	t.AuthorName = author.Name
 
 	for _, h := range o.Legacy.Entities.Hashtags {
 		t.Hashtags = append(t.Hashtags, h.Text)
@@ -408,17 +450,19 @@ func extractInstructions(raw json.RawMessage, timelineKey string) ([]timelineIns
 		current = next
 	}
 
+	// Try nested timeline.instructions first, then direct instructions.
+	// JSON unmarshal silently succeeds with zero values for missing keys,
+	// so we must check if the result is non-empty before returning.
 	var td timelineData
-	if err := json.Unmarshal(current, &td); err != nil {
-		// Try direct instructions array (some endpoints nest differently)
-		var direct struct {
-			Instructions []timelineInstruction `json:"instructions"`
-		}
-		if err2 := json.Unmarshal(current, &direct); err2 != nil {
-			return nil, fmt.Errorf("%w: decoding timeline: %v", ErrRequestFailed, err)
-		}
-		return direct.Instructions, nil
+	if err := json.Unmarshal(current, &td); err == nil && len(td.Timeline.Instructions) > 0 {
+		return td.Timeline.Instructions, nil
 	}
 
-	return td.Timeline.Instructions, nil
+	var direct struct {
+		Instructions []timelineInstruction `json:"instructions"`
+	}
+	if err := json.Unmarshal(current, &direct); err != nil {
+		return nil, fmt.Errorf("%w: decoding timeline instructions: %v", ErrRequestFailed, err)
+	}
+	return direct.Instructions, nil
 }

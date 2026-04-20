@@ -13,7 +13,7 @@ import (
 const (
 	baseURL          = "https://x.com"
 	graphqlBase      = "https://x.com/i/api/graphql"
-	bearerToken      = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+	bearerToken      = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 	defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 	defaultMinGap    = 1 * time.Second
 	defaultMaxRetries = 3
@@ -23,23 +23,23 @@ const (
 // Default queryIDs harvested from X's main.js bundle.
 // These rotate with each deploy; override via WithQueryIDs.
 var defaultQueryIDs = map[string]string{
-	"HomeTimeline":             "L8Lb9oomccM012S7fQ-QKA",
-	"HomeLatestTimeline":       "tzmrSIWxyV4IRRh9nij6TQ",
-	"SearchTimeline":           "rkp6b4vtR9u7v3naGoOzUQ",
+	"HomeTimeline":             "Yf4WJo0fW46TnqrHUw_1Ow",
+	"HomeLatestTimeline":       "hlno2aLQsxiQlOrK-a2V-w",
+	"SearchTimeline":           "R0u1RWRf748KzyGBXvOYRA",
 	"UserByScreenName":         "IGgvgiOx4QZndDHuD3x9TQ",
 	"UserByRestId":             "VQfQ9wwYdk6j_u2O4vt64Q",
-	"UserTweets":               "O0epvwaQPUx-bT9YlqlL6w",
-	"TweetDetail":              "xIYgDwjboktoFeXe_fgacw",
-	"TweetResultByRestId":      "zy39CwTyYhU-_0LP7dljjg",
-	"Followers":                "Enf9DNUZYiT037aersI5gg",
-	"Following":                "ntIPnH1WMBKW--4Tn1q71A",
-	"FollowersYouKnow":         "VkDQMmwC1VJjoUVwuYVepA",
+	"UserTweets":               "6fWQaBPK51aGyC_VC7t9GQ",
+	"TweetDetail":              "tCivIG3o9ls-9cLxTsdxZQ",
+	"TweetResultByRestId":      "fHLDP3qFEjnTqhWBVvsREg",
+	"Followers":                "_wt2xR9Ozi8ZI7agzWf_bw",
+	"Following":                "j4s0ZOO_DvhECpS-2U-SUA",
+	"FollowersYouKnow":         "Iq5xmBUZ059hvTDUMkv1xA",
 	"ListBySlug":               "LDQpQ89B5ipR8izCKrWU0g",
-	"ListLatestTweetsTimeline":  "fb_6wmHD2dk9D-xYXOQlgw",
-	"ListMembers":              "oZLcyjKOfXBf2Jln31YXPw",
-	"ListMemberships":          "en6N7nVkbafxIMQa8ef2DA",
-	"Viewer":                   "k3YiLNE_MAy5J-NANLERUg",
-	"CreateTweet":              "zkcFc6F-RKRgWN8HUkJfZg",
+	"ListLatestTweetsTimeline":  "EX6I_XpJSz1eZ2H9WsR4tA",
+	"ListMembers":              "_7ye8v2J1nJQ6gX-Q4Fjng",
+	"ListMemberships":          "asjMuAwNVSnmASqz-bJb8Q",
+	"Viewer":                   "_8ClT24oZ8tpylf_OSuNdg",
+	"CreateTweet":              "c50A_puUoQGK_4SXseYz3A",
 	"DeleteTweet":              "nxpZCY2K-I6QoFHAHeojFQ",
 	"FavoriteTweet":            "lI07N6Otwv1PhnEgXILM7A",
 	"UnfavoriteTweet":          "ZYKSe-w7KEslx3JhSIk5LA",
@@ -74,6 +74,23 @@ var defaultFeatures = map[string]bool{
 	"longform_notetweets_rich_text_read_enabled":                              true,
 	"longform_notetweets_inline_media_enabled":                                true,
 	"responsive_web_enhance_cards_enabled":                                    false,
+	"hidden_profile_subscriptions_enabled":                                    true,
+	"subscriptions_verification_info_is_identity_verified_enabled":            true,
+	"subscriptions_verification_info_verified_since_enabled":                  true,
+	"highlights_tweets_tab_ui_enabled":                                        true,
+	"responsive_web_twitter_article_notes_tab_enabled":                        true,
+	"subscriptions_feature_can_gift_premium":                                  true,
+	"profile_label_improvements_pcf_label_in_post_enabled":                    true,
+	"rweb_video_screen_enabled":                                               false,
+	"responsive_web_profile_redirect_enabled":                                 false,
+	"premium_content_api_read_enabled":                                        false,
+	"responsive_web_grok_analyze_button_fetch_trends_enabled":                 false,
+	"responsive_web_grok_analyze_post_followups_enabled":                      false,
+	"responsive_web_grok_share_attachment_enabled":                            true,
+	"responsive_web_grok_annotations_enabled":                                 true,
+	"responsive_web_jetfuel_frame":                                            true,
+	"content_disclosure_indicator_enabled":                                     true,
+	"content_disclosure_ai_generated_indicator_enabled":                        true,
 }
 
 // Client is an X API client. It is safe for concurrent use.

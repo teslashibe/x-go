@@ -139,5 +139,5 @@ func (c *Client) UserTweetsPage(ctx context.Context, userID string, count int, c
 		return TweetPage{}, err
 	}
 
-	return parseTweetPage(raw, "user.result.timeline_v2")
+	return parseTweetPage(raw, "user.result.timeline")
 }
