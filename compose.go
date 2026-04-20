@@ -8,6 +8,27 @@ import (
 
 const maxTweetLength = 280
 
+func applyTweetOpts(opts []TweetOption) *tweetOptions {
+	o := &tweetOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+func buildMediaVars(o *tweetOptions) map[string]interface{} {
+	entities := make([]map[string]interface{}, 0, len(o.mediaIDs))
+	for _, id := range o.mediaIDs {
+		entities = append(entities, map[string]interface{}{
+			"media_id": id, "tagged_users": []string{},
+		})
+	}
+	return map[string]interface{}{
+		"media_entities":     entities,
+		"possibly_sensitive": o.possiblySensitive,
+	}
+}
+
 // CreateTweet publishes a new tweet.
 func (c *Client) CreateTweet(ctx context.Context, text string, opts ...TweetOption) (*Tweet, error) {
 	if text == "" {
@@ -17,25 +38,11 @@ func (c *Client) CreateTweet(ctx context.Context, text string, opts ...TweetOpti
 		return nil, ErrTweetTooLong
 	}
 
-	o := &tweetOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	mediaEntities := make([]map[string]interface{}, 0, len(o.mediaIDs))
-	for _, id := range o.mediaIDs {
-		mediaEntities = append(mediaEntities, map[string]interface{}{
-			"media_id": id, "tagged_users": []string{},
-		})
-	}
-
+	o := applyTweetOpts(opts)
 	vars := map[string]interface{}{
-		"tweet_text":   text,
-		"dark_request": false,
-		"media": map[string]interface{}{
-			"media_entities":     mediaEntities,
-			"possibly_sensitive": o.possiblySensitive,
-		},
+		"tweet_text":              text,
+		"dark_request":            false,
+		"media":                   buildMediaVars(o),
 		"semantic_annotation_ids": []interface{}{},
 	}
 
@@ -56,18 +63,7 @@ func (c *Client) Reply(ctx context.Context, inReplyToID, text string, opts ...Tw
 		return nil, ErrTweetTooLong
 	}
 
-	o := &tweetOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	mediaEntities := make([]map[string]interface{}, 0, len(o.mediaIDs))
-	for _, id := range o.mediaIDs {
-		mediaEntities = append(mediaEntities, map[string]interface{}{
-			"media_id": id, "tagged_users": []string{},
-		})
-	}
-
+	o := applyTweetOpts(opts)
 	vars := map[string]interface{}{
 		"tweet_text":   text,
 		"dark_request": false,
@@ -75,10 +71,7 @@ func (c *Client) Reply(ctx context.Context, inReplyToID, text string, opts ...Tw
 			"in_reply_to_tweet_id":   inReplyToID,
 			"exclude_reply_user_ids": []string{},
 		},
-		"media": map[string]interface{}{
-			"media_entities":     mediaEntities,
-			"possibly_sensitive": o.possiblySensitive,
-		},
+		"media":                   buildMediaVars(o),
 		"semantic_annotation_ids": []interface{}{},
 	}
 
@@ -98,26 +91,12 @@ func (c *Client) QuoteTweet(ctx context.Context, quotedTweetURL, text string, op
 		return nil, ErrTweetTooLong
 	}
 
-	o := &tweetOptions{}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	mediaEntities := make([]map[string]interface{}, 0, len(o.mediaIDs))
-	for _, id := range o.mediaIDs {
-		mediaEntities = append(mediaEntities, map[string]interface{}{
-			"media_id": id, "tagged_users": []string{},
-		})
-	}
-
+	o := applyTweetOpts(opts)
 	vars := map[string]interface{}{
-		"tweet_text":     text,
-		"attachment_url": quotedTweetURL,
-		"dark_request":   false,
-		"media": map[string]interface{}{
-			"media_entities":     mediaEntities,
-			"possibly_sensitive": o.possiblySensitive,
-		},
+		"tweet_text":              text,
+		"attachment_url":          quotedTweetURL,
+		"dark_request":            false,
+		"media":                   buildMediaVars(o),
 		"semantic_annotation_ids": []interface{}{},
 	}
 
@@ -154,5 +133,8 @@ func parseTweetFromCreateResponse(data json.RawMessage) (*Tweet, error) {
 		return nil, fmt.Errorf("%w: parsing create tweet response: %v", ErrRequestFailed, err)
 	}
 	tweet := toTweet(wrapper.CreateTweet.TweetResults.Result)
+	if tweet.ID == "" {
+		return nil, fmt.Errorf("%w: tweet creation returned empty ID", ErrRequestFailed)
+	}
 	return &tweet, nil
 }

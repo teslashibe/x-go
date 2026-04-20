@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const maxResponseBody = 10 << 20 // 10 MB
+
 // graphqlGET executes an authenticated GraphQL GET request with retries.
 func (c *Client) graphqlGET(ctx context.Context, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
 	qid := c.queryID(operationName)
@@ -125,7 +127,7 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
@@ -169,7 +171,7 @@ func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, v
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
@@ -205,7 +207,7 @@ func (c *Client) restGET(ctx context.Context, path string, params url.Values) (j
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
@@ -242,7 +244,7 @@ func (c *Client) restPOST(ctx context.Context, path string, payload interface{})
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
@@ -274,7 +276,7 @@ func (c *Client) restFormPOST(ctx context.Context, path string, form url.Values)
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
@@ -347,10 +349,16 @@ func (c *Client) waitForGap(ctx context.Context) {
 }
 
 // checkStatus maps HTTP status codes to sentinel errors.
+// On non-OK responses, it drains the body so the TCP connection can be reused.
 func (c *Client) checkStatus(resp *http.Response) error {
-	switch {
-	case resp.StatusCode == http.StatusOK:
+	if resp.StatusCode == http.StatusOK {
 		return nil
+	}
+
+	// Drain body to allow keep-alive reuse.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+
+	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrUnauthorized
 	case resp.StatusCode == http.StatusForbidden:
@@ -358,9 +366,12 @@ func (c *Client) checkStatus(resp *http.Response) error {
 	case resp.StatusCode == http.StatusNotFound:
 		return ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
-		time.Sleep(wait)
-		return ErrRateLimited
+		// X uses x-rate-limit-reset (Unix timestamp) and sometimes Retry-After.
+		wait := parseRetryAfter(resp.Header.Get("X-Rate-Limit-Reset"), 0)
+		if wait == 0 {
+			wait = parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
+		}
+		return fmt.Errorf("%w (retry after %s)", ErrRateLimited, wait)
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
@@ -387,6 +398,10 @@ func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
 			return nil, ErrNotFound
 		case first.Code == 88 || strings.Contains(msg, "rate limit"):
 			return nil, ErrRateLimited
+		case first.Code == 327 || strings.Contains(msg, "already retweeted"):
+			return nil, ErrAlreadyRetweeted
+		case first.Code == 349 || strings.Contains(msg, "send a direct message"):
+			return nil, ErrDMClosed
 		case strings.Contains(msg, "forbidden") || strings.Contains(msg, "not allowed"):
 			return nil, ErrForbidden
 		default:
@@ -401,15 +416,26 @@ func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
 	return envelope.Data, nil
 }
 
-// parseRetryAfter parses the Retry-After header.
+// parseRetryAfter parses rate-limit headers. Handles three formats:
+// - Seconds integer (Retry-After: 60)
+// - Unix epoch timestamp (X-Rate-Limit-Reset: 1716000000)
+// - HTTP-date (Retry-After: Mon, 01 Jan 2024 00:00:00 GMT)
 func parseRetryAfter(val string, fallback time.Duration) time.Duration {
 	if val == "" {
 		return fallback
 	}
-	if secs, err := strconv.Atoi(strings.TrimSpace(val)); err == nil {
-		return time.Duration(secs) * time.Second
+	trimmed := strings.TrimSpace(val)
+	if n, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		if n > 1_000_000_000 {
+			// Unix timestamp — compute duration until that time.
+			if d := time.Until(time.Unix(n, 0)); d > 0 {
+				return d
+			}
+			return fallback
+		}
+		return time.Duration(n) * time.Second
 	}
-	if t, err := http.ParseTime(val); err == nil {
+	if t, err := http.ParseTime(trimmed); err == nil {
 		if d := time.Until(t); d > 0 {
 			return d
 		}

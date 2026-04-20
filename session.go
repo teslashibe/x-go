@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 )
 
 // validateSession calls the Viewer query to verify auth and cache the
@@ -82,7 +83,9 @@ func (c *Client) RefreshQueryIDs(ctx context.Context) error {
 	}
 
 	jsURL := string(matches[1])
-	if jsURL != "" && jsURL[0] == '/' {
+	if strings.HasPrefix(jsURL, "//") {
+		jsURL = "https:" + jsURL
+	} else if jsURL != "" && jsURL[0] == '/' {
 		jsURL = baseURL + jsURL
 	}
 
