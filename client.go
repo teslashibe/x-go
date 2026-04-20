@@ -250,6 +250,38 @@ func (c *Client) restPOST(ctx context.Context, path string, payload interface{})
 	return body, nil
 }
 
+// restFormPOST performs an authenticated form-encoded POST to a REST endpoint.
+func (c *Client) restFormPOST(ctx context.Context, path string, form url.Values) (json.RawMessage, error) {
+	c.waitForGap(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
+	defer resp.Body.Close()
+
+	if err := c.checkStatus(resp); err != nil {
+		return nil, err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
+	}
+
+	return body, nil
+}
+
 // setHeaders sets all required auth and fingerprint headers on the request.
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", c.userAgent)

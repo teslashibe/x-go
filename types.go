@@ -121,7 +121,59 @@ type KeywordFreq struct {
 
 // AuthorActivity summarises one author's posting activity.
 type AuthorActivity struct {
-	AuthorID    string `json:"authorId"`
-	ScreenName  string `json:"screenName"`
-	TweetCount  int    `json:"tweetCount"`
+	AuthorID   string `json:"authorId"`
+	ScreenName string `json:"screenName"`
+	TweetCount int    `json:"tweetCount"`
+}
+
+// Conversation is a DM conversation.
+type Conversation struct {
+	ID              string   `json:"id"`
+	Type            string   `json:"type"`
+	Participants    []User   `json:"participants"`
+	LastMessage     *Message `json:"lastMessage,omitempty"`
+	LastReadEventID string   `json:"lastReadEventId,omitempty"`
+	Trusted         bool     `json:"trusted"`
+}
+
+// Message is a single DM message.
+type Message struct {
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversationId"`
+	SenderID       string    `json:"senderId"`
+	Text           string    `json:"text"`
+	CreatedAt      time.Time `json:"createdAt"`
+	MediaURLs      []string  `json:"mediaUrls,omitempty"`
+}
+
+// ConversationPage is one page of DM conversations.
+type ConversationPage struct {
+	Conversations []Conversation `json:"conversations"`
+	NextCursor    string         `json:"nextCursor,omitempty"`
+	HasNext       bool           `json:"hasNext"`
+}
+
+// MessagePage is one page of messages within a conversation.
+type MessagePage struct {
+	Messages   []Message `json:"messages"`
+	NextCursor string    `json:"nextCursor,omitempty"`
+	HasNext    bool      `json:"hasNext"`
+}
+
+// TweetOption configures CreateTweet, Reply, and QuoteTweet.
+type TweetOption func(*tweetOptions)
+
+type tweetOptions struct {
+	mediaIDs          []string
+	possiblySensitive bool
+}
+
+// WithMediaIDs attaches media to a tweet being composed.
+func WithMediaIDs(ids ...string) TweetOption {
+	return func(o *tweetOptions) { o.mediaIDs = ids }
+}
+
+// WithPossiblySensitive flags a tweet's media as possibly sensitive.
+func WithPossiblySensitive() TweetOption {
+	return func(o *tweetOptions) { o.possiblySensitive = true }
 }

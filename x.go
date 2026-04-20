@@ -39,6 +39,14 @@ var defaultQueryIDs = map[string]string{
 	"ListMembers":              "oZLcyjKOfXBf2Jln31YXPw",
 	"ListMemberships":          "en6N7nVkbafxIMQa8ef2DA",
 	"Viewer":                   "k3YiLNE_MAy5J-NANLERUg",
+	"CreateTweet":              "zkcFc6F-RKRgWN8HUkJfZg",
+	"DeleteTweet":              "nxpZCY2K-I6QoFHAHeojFQ",
+	"FavoriteTweet":            "lI07N6Otwv1PhnEgXILM7A",
+	"UnfavoriteTweet":          "ZYKSe-w7KEslx3JhSIk5LA",
+	"CreateRetweet":            "mbRO74GrOvSfRcJnlMapnQ",
+	"DeleteRetweet":            "ZyZigVsNiFO6v1dEks1eWg",
+	"CreateBookmark":           "aoDbu3RHznuiSkQ9aNM67Q",
+	"DeleteBookmark":           "Wlmlj2-xzyS1GN3a6cj-mQ",
 }
 
 // defaultFeatures is the standard features map sent with every GraphQL request.

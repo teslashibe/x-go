@@ -13,4 +13,8 @@ var (
 	ErrInvalidParams = errors.New("x: invalid or missing required parameters")
 	ErrPartialResult = errors.New("x: context cancelled; partial result returned")
 	ErrRequestFailed = errors.New("x: HTTP request failed")
+
+	ErrAlreadyRetweeted = errors.New("x: tweet already retweeted")
+	ErrTweetTooLong     = errors.New("x: tweet text exceeds 280 characters")
+	ErrDMClosed         = errors.New("x: recipient has DMs closed")
 )
