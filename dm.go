@@ -34,6 +34,44 @@ func (c *Client) SendDM(ctx context.Context, conversationID, text string) (*Mess
 	return parseSentMessage(data, conversationID)
 }
 
+// SendNewDM sends a direct message to a user by their ID, creating a new
+// conversation if one doesn't exist. Returns ErrDMClosed if the recipient
+// has DMs disabled.
+func (c *Client) SendNewDM(ctx context.Context, recipientID, text string) (*Message, error) {
+	if recipientID == "" || text == "" {
+		return nil, ErrInvalidParams
+	}
+
+	payload := map[string]interface{}{
+		"conversation_id":                 recipientID + "-" + c.restID,
+		"recipient_ids":                   recipientID,
+		"request_id":                      fmt.Sprintf("%d", time.Now().UnixNano()),
+		"text":                            text,
+		"cards_platform":                  "Web-12",
+		"include_cards":                   1,
+		"include_quote_count":             true,
+		"dm_secret_conversations_enabled": false,
+		"dm_users":                        false,
+	}
+
+	data, err := c.restPOST(ctx, "/i/api/1.1/dm/new2.json", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	convID := buildConversationID(c.restID, recipientID)
+	return parseSentMessage(data, convID)
+}
+
+// buildConversationID creates the canonical conversation ID for a 1:1 DM.
+// X always puts the lower numeric ID first.
+func buildConversationID(id1, id2 string) string {
+	if id1 > id2 {
+		return id2 + "-" + id1
+	}
+	return id1 + "-" + id2
+}
+
 // GetConversations returns the user's DM conversations.
 func (c *Client) GetConversations(ctx context.Context) (ConversationPage, error) {
 	data, err := c.restGET(ctx, "/i/api/1.1/dm/inbox_initial_state.json", nil)

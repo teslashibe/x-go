@@ -170,7 +170,13 @@ _ = c.Unblock(ctx, userID)
 ### Direct messages
 
 ```go
-msg, _ := c.SendDM(ctx, conversationID, "Hey!")
+// DM a new person by user ID (cold outreach)
+msg, _ := c.SendNewDM(ctx, userID, "Hey, saw your post about AI agents!")
+
+// Reply in an existing conversation
+msg, _ = c.SendDM(ctx, conversationID, "Following up on our chat")
+
+// List conversations and read messages
 convos, _ := c.GetConversations(ctx)
 msgs, _ := c.GetConversation(ctx, conversationID)
 ```
