@@ -175,6 +175,85 @@ convos, _ := c.GetConversations(ctx)
 msgs, _ := c.GetConversation(ctx, conversationID)
 ```
 
+### Advanced search
+
+Full parity with X's Advanced Search UI:
+
+```go
+search := x.NewAdvancedSearch()
+search.AllWords = "AI agents"
+search.ExactPhrase = "go-to-market"
+search.AnyWords = []string{"startup", "SaaS", "B2B"}
+search.NoneWords = []string{"spam"}
+search.Hashtags = []string{"buildinpublic"}
+search.Language = "en"
+search.From = []string{"elonmusk"}
+search.To = []string{"OpenAI"}
+search.Mentioning = []string{"ycombinator"}
+search.Replies = x.ReplyFilterExclude
+search.Links = x.LinkFilterOnly
+search.MinReplies = 10
+search.MinLikes = 100
+search.MinReposts = 50
+search.Since = "2026-01-01"
+search.Until = "2026-04-20"
+search.ResultType = x.SearchLatest
+
+page, _ := c.AdvancedSearchTweets(ctx, search, 20)
+page, _ = c.AdvancedSearchTweetsPage(ctx, search, 20, page.NextCursor)
+```
+
+### Iterators (paginated scraping with checkpoint/resume)
+
+Walk through results page by page with serialisable checkpoints:
+
+```go
+it := x.NewSearchIterator(c, "golang", 20,
+    x.WithMaxTweets(500),
+    x.WithSearchResultType(x.SearchLatest),
+)
+for it.Next(ctx) {
+    for _, tweet := range it.Page() {
+        process(tweet)
+    }
+}
+if err := it.Err(); err != nil { handle(err) }
+
+// Save position for next run
+cp := it.Checkpoint()
+data, _ := cp.Marshal()
+os.WriteFile("checkpoint.json", data, 0644)
+
+// Resume later
+data, _ = os.ReadFile("checkpoint.json")
+cp, _ = x.UnmarshalCheckpoint(data)
+it = x.NewSearchIterator(c, "golang", 20, x.WithCheckpoint(cp))
+```
+
+Iterator types:
+
+| Factory | Source |
+|---------|--------|
+| `NewSearchIterator` | Simple search |
+| `NewAdvancedSearchIterator` | Advanced search |
+| `NewUserTweetsIterator` | User's tweet history |
+| `NewTimelineIterator` | Home timeline (For You or Following) |
+
+Options: `WithMaxTweets(n)`, `WithStopAtID(id)`, `WithCheckpoint(cp)`, `WithSearchResultType(t)`
+
+### Rate limit management
+
+Adaptive throttling using X's response headers:
+
+```go
+rl := c.RateLimit()
+fmt.Printf("remaining=%d/%d reset=%s\n", rl.Remaining, rl.Limit, rl.Reset)
+```
+
+- Tracks `x-rate-limit-limit`, `x-rate-limit-remaining`, `x-rate-limit-reset` from every response
+- Automatically widens request gap when remaining is low
+- On 429, sleeps the exact retry-after duration before retrying
+
 ## Configuration
 
 ```go
@@ -207,8 +286,8 @@ c, _ := x.New(cookies, x.WithQueryIDs(map[string]string{
 ## Transport
 
 - **stdlib only** — zero `require` entries in `go.mod`
-- **Leaky-bucket rate limiting** — configurable minimum gap between requests (default 1s)
-- **Exponential backoff** — retries with `500ms × 2^n` jitter on transient failures
+- **Adaptive rate limiting** — tracks `x-rate-limit-remaining` headers and widens request gap as budget depletes; on 429 sleeps the exact retry-after duration
+- **Exponential backoff** — retries with `500ms × 2^n` on transient failures; rate-limit retries use server-specified wait
 - **`X-Client-Transaction-Id` header** — generated via X's animation-key algorithm to bypass CDN bot detection
 - **10 MB body cap** — all response bodies are limited to prevent memory exhaustion
 - **Thread-safe** — `Client` is safe for concurrent use from multiple goroutines

@@ -15,8 +15,8 @@
 //
 //	timeline, err := c.HomeTimeline(ctx, 20)
 //	results, err := c.SearchTweets(ctx, "golang", 20)
-//	trends, err := c.Trends(ctx)
 //	profile, err := c.GetProfile(ctx, "elonmusk")
+//	followers, err := c.GetFollowers(ctx, userID, 20)
 //
 // Quick start (writes):
 //
