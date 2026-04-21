@@ -88,10 +88,11 @@ func (c *Client) GetListTimelinePage(ctx context.Context, listID string, count i
 
 // GetListMembers returns the first page of members of a list.
 func (c *Client) GetListMembers(ctx context.Context, listID string, count int) (UserPage, error) {
-	return c.getListMembersPage(ctx, listID, count, "")
+	return c.GetListMembersPage(ctx, listID, count, "")
 }
 
-func (c *Client) getListMembersPage(ctx context.Context, listID string, count int, cursor string) (UserPage, error) {
+// GetListMembersPage returns a page of list members starting from cursor.
+func (c *Client) GetListMembersPage(ctx context.Context, listID string, count int, cursor string) (UserPage, error) {
 	if listID == "" {
 		return UserPage{}, fmt.Errorf("%w: listID must not be empty", ErrInvalidParams)
 	}

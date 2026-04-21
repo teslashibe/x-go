@@ -41,10 +41,11 @@ type TweetIterator struct {
 	seen      int
 	maxTweets int
 	stopAtID  string // stop when we encounter this tweet ID (resume boundary)
-	done      bool
-	query     string // for checkpoint serialisation
-	page      []Tweet
-	err       error
+	done       bool
+	query      string // for checkpoint serialisation
+	searchType SearchType
+	page       []Tweet
+	err        error
 }
 
 // IteratorOption configures a TweetIterator.
@@ -70,6 +71,12 @@ func WithCheckpoint(cp Checkpoint) IteratorOption {
 	}
 }
 
+// WithSearchResultType sets the search tab for NewSearchIterator (Top, Latest, Media).
+// Has no effect on other iterator types.
+func WithSearchResultType(t SearchType) IteratorOption {
+	return func(it *TweetIterator) { it.searchType = t }
+}
+
 // Next fetches the next page of tweets. Returns false when there are no more
 // results or the iterator has been exhausted (max tweets reached, stopAtID hit,
 // or no more pages). Call Page() to get the current page's tweets.
@@ -86,6 +93,11 @@ func WithCheckpoint(cp Checkpoint) IteratorOption {
 //	cp := it.Checkpoint() // save for next run
 func (it *TweetIterator) Next(ctx context.Context) bool {
 	if it.done {
+		return false
+	}
+	if ctx.Err() != nil {
+		it.err = ctx.Err()
+		it.done = true
 		return false
 	}
 	if it.maxTweets > 0 && it.seen >= it.maxTweets {
@@ -173,30 +185,34 @@ func (it *TweetIterator) Checkpoint() Checkpoint {
 }
 
 // NewSearchIterator creates a TweetIterator that paginates through search results.
+// Use WithSearchResultType(SearchLatest) to iterate chronologically.
 func NewSearchIterator(c *Client, query string, pageSize int, opts ...IteratorOption) *TweetIterator {
-	so := &searchOptions{searchType: SearchTop}
 	it := &TweetIterator{
-		client: c,
-		query:  query,
-	}
-	it.fetchFn = func(ctx context.Context, cursor string) (TweetPage, error) {
-		return c.SearchTweetsPage(ctx, query, pageSize, cursor, WithSearchType(so.searchType))
+		client:     c,
+		query:      query,
+		searchType: SearchTop,
 	}
 	for _, o := range opts {
 		o(it)
+	}
+	st := it.searchType
+	it.fetchFn = func(ctx context.Context, cursor string) (TweetPage, error) {
+		return c.SearchTweetsPage(ctx, query, pageSize, cursor, WithSearchType(st))
 	}
 	return it
 }
 
 // NewAdvancedSearchIterator creates a TweetIterator that paginates through
-// advanced search results.
+// advanced search results. The search query is snapshotted at construction time;
+// subsequent mutations to the AdvancedSearch struct have no effect.
 func NewAdvancedSearchIterator(c *Client, search *AdvancedSearch, pageSize int, opts ...IteratorOption) *TweetIterator {
+	snapshot := *search
 	it := &TweetIterator{
 		client: c,
-		query:  search.Build(),
+		query:  snapshot.Build(),
 	}
 	it.fetchFn = func(ctx context.Context, cursor string) (TweetPage, error) {
-		return c.AdvancedSearchTweetsPage(ctx, search, pageSize, cursor)
+		return c.AdvancedSearchTweetsPage(ctx, &snapshot, pageSize, cursor)
 	}
 	for _, o := range opts {
 		o(it)

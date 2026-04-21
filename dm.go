@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -45,6 +47,9 @@ func (c *Client) GetConversations(ctx context.Context) (ConversationPage, error)
 func (c *Client) GetConversation(ctx context.Context, conversationID string) (MessagePage, error) {
 	if conversationID == "" {
 		return MessagePage{}, ErrInvalidParams
+	}
+	if strings.ContainsAny(conversationID, "/.\\") {
+		return MessagePage{}, fmt.Errorf("%w: conversationID contains invalid characters", ErrInvalidParams)
 	}
 	path := "/i/api/1.1/dm/conversation/" + conversationID + ".json"
 	data, err := c.restGET(ctx, path, nil)
@@ -109,6 +114,9 @@ func parseConversations(data json.RawMessage) (ConversationPage, error) {
 			LastReadEventID: conv.LastReadEventID,
 		})
 	}
+	sort.Slice(page.Conversations, func(i, j int) bool {
+		return page.Conversations[i].ID < page.Conversations[j].ID
+	})
 	if resp.InboxInitialState.Cursor != "" {
 		page.NextCursor = resp.InboxInitialState.Cursor
 		page.HasNext = true

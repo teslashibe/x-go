@@ -97,7 +97,8 @@ func (a *AdvancedSearch) Build() string {
 		parts = append(parts, a.AllWords)
 	}
 	if a.ExactPhrase != "" {
-		parts = append(parts, "\""+a.ExactPhrase+"\"")
+		safe := strings.ReplaceAll(a.ExactPhrase, "\"", "")
+		parts = append(parts, "\""+safe+"\"")
 	}
 	if len(a.AnyWords) > 0 {
 		parts = append(parts, "("+strings.Join(a.AnyWords, " OR ")+")")

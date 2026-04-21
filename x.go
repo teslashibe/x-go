@@ -107,8 +107,9 @@ type Client struct {
 	gapMu      sync.Mutex
 	lastReqAt  time.Time
 	reqMu      sync.RWMutex // protects queryIDs
-	viewer     *User
-	txState    transactionState
+	viewer      *User
+	txState     transactionState
+	txInitErr   error // non-nil if initTransaction failed; Followers/Search may 404
 }
 
 // Option configures a Client.
@@ -216,9 +217,16 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 
-	_ = c.initTransaction(context.Background())
+	c.txInitErr = c.initTransaction(context.Background())
 
 	return c, nil
+}
+
+// TransactionInitErr returns the error from X-Client-Transaction-Id bootstrap,
+// if any. A non-nil value means endpoints gated behind CDN validation
+// (Followers, SearchTimeline) will return 404.
+func (c *Client) TransactionInitErr() error {
+	return c.txInitErr
 }
 
 // Me returns the authenticated user's profile.

@@ -96,7 +96,7 @@ func (c *Client) RefreshQueryIDs(ctx context.Context) error {
 	}
 	defer htmlResp.Body.Close()
 
-	htmlBody, err := io.ReadAll(htmlResp.Body)
+	htmlBody, err := io.ReadAll(io.LimitReader(htmlResp.Body, maxResponseBody))
 	if err != nil {
 		return fmt.Errorf("%w: reading HTML: %v", ErrRequestFailed, err)
 	}
@@ -125,7 +125,8 @@ func (c *Client) RefreshQueryIDs(ctx context.Context) error {
 	}
 	defer jsResp.Body.Close()
 
-	jsBody, err := io.ReadAll(jsResp.Body)
+	const maxJSBody = 5 << 20 // 5 MB — main.js is typically ~3 MB
+	jsBody, err := io.ReadAll(io.LimitReader(jsResp.Body, maxJSBody))
 	if err != nil {
 		return fmt.Errorf("%w: reading main.js: %v", ErrRequestFailed, err)
 	}
