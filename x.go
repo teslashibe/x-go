@@ -108,6 +108,7 @@ type Client struct {
 	lastReqAt  time.Time
 	reqMu      sync.RWMutex // protects queryIDs
 	viewer     *User
+	txState    transactionState
 }
 
 // Option configures a Client.
@@ -214,6 +215,9 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 	if err := c.validateSession(context.Background()); err != nil {
 		return nil, err
 	}
+
+	_ = c.initTransaction(context.Background())
+
 	return c, nil
 }
 

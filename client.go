@@ -299,6 +299,9 @@ func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("Sec-Fetch-Mode", "cors")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("Cookie", c.cookieHeader())
+	if txID := c.generateTransactionID(req.Method, req.URL.Path); txID != "" {
+		req.Header.Set("X-Client-Transaction-Id", txID)
+	}
 }
 
 // cookieHeader builds the Cookie header value.
