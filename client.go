@@ -42,7 +42,7 @@ func (c *Client) graphqlGET(ctx context.Context, operationName string, variables
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
-			wait := c.retryBase * time.Duration(math.Pow(2, float64(i-1)))
+			wait := retryWait(lastErr, c.retryBase, i)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -78,7 +78,7 @@ func (c *Client) graphqlPOST(ctx context.Context, operationName string, variable
 	var lastErr error
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
-			wait := c.retryBase * time.Duration(math.Pow(2, float64(i-1)))
+			wait := retryWait(lastErr, c.retryBase, i)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -97,6 +97,17 @@ func (c *Client) graphqlPOST(ctx context.Context, operationName string, variable
 		lastErr = err
 	}
 	return nil, lastErr
+}
+
+// retryWait returns the duration to sleep before the next retry. If the
+// previous error was a 429 with a Wait duration, uses that; otherwise
+// falls back to exponential backoff.
+func retryWait(lastErr error, base time.Duration, attempt int) time.Duration {
+	var rle *RateLimitError
+	if errors.As(lastErr, &rle) && rle.Wait > 0 {
+		return rle.Wait
+	}
+	return base * time.Duration(math.Pow(2, float64(attempt-1)))
 }
 
 // doGraphQLGET performs a single GraphQL GET request.
@@ -332,11 +343,15 @@ func (c *Client) queryID(name string) string {
 	return c.queryIDs[name]
 }
 
-// waitForGap enforces the leaky-bucket minimum request gap.
+// waitForGap enforces the leaky-bucket minimum request gap, adapting based
+// on X's rate limit headers. When remaining requests are low, the gap widens
+// automatically to spread requests across the remaining window.
 func (c *Client) waitForGap(ctx context.Context) {
+	gap := c.adaptiveGap()
+
 	c.gapMu.Lock()
 	now := time.Now()
-	nextSlot := c.lastReqAt.Add(c.minGap)
+	nextSlot := c.lastReqAt.Add(gap)
 	if now.After(nextSlot) {
 		nextSlot = now
 	}
@@ -351,9 +366,59 @@ func (c *Client) waitForGap(ctx context.Context) {
 	}
 }
 
+// adaptiveGap returns the current request gap. If rate limit headers show
+// we're running low, it spreads remaining requests across the reset window.
+func (c *Client) adaptiveGap() time.Duration {
+	c.rateMu.Lock()
+	rs := c.rateState
+	c.rateMu.Unlock()
+
+	if rs.Remaining <= 0 || rs.Reset.IsZero() {
+		return c.minGap
+	}
+
+	untilReset := time.Until(rs.Reset)
+	if untilReset <= 0 {
+		return c.minGap
+	}
+
+	// Spread remaining requests evenly across the window with a 10% safety buffer.
+	spread := untilReset / time.Duration(float64(rs.Remaining)*0.9)
+	if spread > c.minGap {
+		return spread
+	}
+	return c.minGap
+}
+
+// updateRateLimit reads X's rate-limit headers from a response and updates
+// the client's tracked state. Called on every response (2xx and 4xx).
+func (c *Client) updateRateLimit(resp *http.Response) {
+	limit := resp.Header.Get("X-Rate-Limit-Limit")
+	remaining := resp.Header.Get("X-Rate-Limit-Remaining")
+	reset := resp.Header.Get("X-Rate-Limit-Reset")
+	if limit == "" && remaining == "" && reset == "" {
+		return
+	}
+
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+
+	if v, err := strconv.Atoi(limit); err == nil {
+		c.rateState.Limit = v
+	}
+	if v, err := strconv.Atoi(remaining); err == nil {
+		c.rateState.Remaining = v
+	}
+	if v, err := strconv.ParseInt(reset, 10, 64); err == nil {
+		c.rateState.Reset = time.Unix(v, 0)
+	}
+}
+
 // checkStatus maps HTTP status codes to sentinel errors.
 // On non-OK responses, it drains the body so the TCP connection can be reused.
 func (c *Client) checkStatus(resp *http.Response) error {
+	c.updateRateLimit(resp)
+
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
@@ -369,17 +434,30 @@ func (c *Client) checkStatus(resp *http.Response) error {
 	case resp.StatusCode == http.StatusNotFound:
 		return ErrNotFound
 	case resp.StatusCode == http.StatusTooManyRequests:
-		// X uses x-rate-limit-reset (Unix timestamp) and sometimes Retry-After.
 		wait := parseRetryAfter(resp.Header.Get("X-Rate-Limit-Reset"), 0)
 		if wait == 0 {
 			wait = parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
 		}
-		return fmt.Errorf("%w (retry after %s)", ErrRateLimited, wait)
+		return &RateLimitError{Wait: wait}
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
 		return fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
 	}
+}
+
+// RateLimitError carries the retry-after duration from a 429 response.
+// It wraps ErrRateLimited for errors.Is compatibility.
+type RateLimitError struct {
+	Wait time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("%s (retry after %s)", ErrRateLimited.Error(), e.Wait)
+}
+
+func (e *RateLimitError) Unwrap() error {
+	return ErrRateLimited
 }
 
 // parseGQLResponse extracts the data field from a GraphQL response.

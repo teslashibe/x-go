@@ -126,6 +126,13 @@ type AuthorActivity struct {
 	TweetCount int    `json:"tweetCount"`
 }
 
+// RateLimitState tracks X's rate limit headers from the most recent response.
+type RateLimitState struct {
+	Limit     int       `json:"limit"`     // x-rate-limit-limit: max requests per window
+	Remaining int       `json:"remaining"` // x-rate-limit-remaining: requests left in window
+	Reset     time.Time `json:"reset"`     // x-rate-limit-reset: when the window resets (UTC)
+}
+
 // Conversation is a DM conversation.
 type Conversation struct {
 	ID              string   `json:"id"`
