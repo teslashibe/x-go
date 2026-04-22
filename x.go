@@ -107,8 +107,8 @@ type Client struct {
 	gapMu      sync.Mutex
 	lastReqAt  time.Time
 	reqMu      sync.RWMutex // protects queryIDs
-	rateMu     sync.Mutex
-	rateState  RateLimitState
+	rlMu       sync.Mutex
+	rlState    RateLimitState
 	viewer      *User
 	txState     transactionState
 	txInitErr   error // non-nil if initTransaction failed; Followers/Search may 404
@@ -224,11 +224,12 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-// RateLimit returns the most recently observed rate limit state from X's headers.
+// RateLimit returns a snapshot of the most recently observed rate-limit state.
+// Use RateLimitState.IsLimited() to check if the client is currently throttled.
 func (c *Client) RateLimit() RateLimitState {
-	c.rateMu.Lock()
-	defer c.rateMu.Unlock()
-	return c.rateState
+	c.rlMu.Lock()
+	defer c.rlMu.Unlock()
+	return c.rlState
 }
 
 // TransactionInitErr returns the error from X-Client-Transaction-Id bootstrap,
