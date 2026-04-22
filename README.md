@@ -316,6 +316,27 @@ if errors.Is(err, x.ErrDMClosed)          { /* recipient has DMs closed */ }
 if errors.Is(err, x.ErrPartialResult)     { /* context cancelled mid-scrape */ }
 ```
 
+## MCP support
+
+This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 37 tools cover the full client API: profile fetch (handle/ID/me), follower/following graph, home + latest timelines, tweet fetch + thread, user-tweet feed, simple/user/advanced search, tweet compose (create/reply/quote/delete), engagement (like/unlike/retweet/unretweet/bookmark/unbookmark), social graph writes (follow/unfollow/mute/unmute/block/unblock), DMs (list/read/send/cold-send), lists (metadata/timeline/members), and timeline trend analysis.
+
+```go
+import (
+    "github.com/teslashibe/mcptool"
+    x "github.com/teslashibe/x-go"
+    xmcp "github.com/teslashibe/x-go/mcp"
+)
+
+client, _ := x.New(x.Cookies{...})
+provider := xmcp.Provider{}
+for _, tool := range provider.Tools() {
+    // register tool with your MCP server, passing client as the
+    // opaque client argument when invoking
+}
+```
+
+A coverage test in `mcp/mcp_test.go` fails if a new exported method is added to `*Client` without either being wrapped by an MCP tool or being added to `mcp.Excluded` with a reason — keeping the MCP surface in lockstep with the package API is enforced by CI rather than convention.
+
 ## Testing
 
 ```bash
