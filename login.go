@@ -57,6 +57,15 @@ type LoginParams struct {
 	UserAgent string
 	// ProxyURL routes the login through an HTTP/S proxy (residential egress).
 	ProxyURL string
+	// SidecarURL, when set, delegates the login to the headless-browser
+	// social-login sidecar (Playwright drives x.com/i/flow/login). X's
+	// onboarding edge fingerprints browser-only behavioral signals (HTTP/2
+	// frame order, ui_metrics execution, Arkose) that a pure-Go client can't
+	// reproduce — it 399s the credential step ("Could not log you in now")
+	// even with correct payloads + Chrome JA3. A real browser emits those
+	// signals natively, so the sidecar is the reliable path; the pure-Go flow
+	// below stays as a fallback. Mirrors instagram-go / tiktok-go.
+	SidecarURL string
 }
 
 // LoginResult is the minted session, ready for New.
@@ -76,23 +85,24 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		ua = defaultUserAgent
 	}
 
+	// Preferred path: drive the real web login through the headless-browser
+	// social-login sidecar (beats X's behavioral anti-bot, which 399s the
+	// pure-Go onboarding flow at the credential step).
+	if strings.TrimSpace(p.SidecarURL) != "" {
+		return loginViaSidecar(ctx, p)
+	}
+
 	jar, _ := cookiejar.New(nil)
 	// X's onboarding edge fingerprints the TLS ClientHello (JA3) + HTTP stack
 	// and 399s ("Could not log you in now") plain-Go clients at the credential
 	// step, even when the subtask payloads are correct. Present Chrome's
 	// ClientHello via the shared impersonate transport — the same posture
 	// reddit-go's login uses to clear its JA3 block.
+	// Pure-Go fallback transport: present Chrome's JA3 (the sidecar path above
+	// is the reliable one for X; this fallback is kept for completeness and is
+	// 399'd by X's behavioral anti-bot at the credential step).
 	hc := impersonate.NewClient(impersonate.Options{}, jar, 30*time.Second)
-	if p.ProxyURL != "" {
-		// Explicit egress proxy fallback. impersonate-go has no proxy hook yet,
-		// so this swaps in a plain proxied transport (loses JA3 impersonation);
-		// used only when a residential egress is explicitly required.
-		if parsed, err := url.Parse(p.ProxyURL); err == nil {
-			tr := http.DefaultTransport.(*http.Transport).Clone()
-			tr.Proxy = http.ProxyURL(parsed)
-			hc.Transport = tr
-		}
-	}
+	_ = p.ProxyURL
 
 	fl := &loginFlow{hc: hc, ua: ua, params: p, debug: strings.TrimSpace(os.Getenv("X_LOGIN_DEBUG")) != ""}
 
@@ -145,6 +155,86 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		return nil, fmt.Errorf("%w: login did not establish a session (auth_token/ct0 missing)", ErrUnauthorized)
 	}
 	return &LoginResult{Cookies: cookies, UserAgent: ua}, nil
+}
+
+// --- social-login sidecar path -------------------------------------------
+
+type sidecarLoginRequest struct {
+	Platform   string `json:"platform"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	TOTPSecret string `json:"totpSecret,omitempty"`
+	ProxyURL   string `json:"proxyUrl,omitempty"`
+}
+
+type sidecarLoginResponse struct {
+	OK       bool              `json:"ok"`
+	FinalURL string            `json:"finalUrl"`
+	Cookies  map[string]string `json:"cookies"`
+	Hints    []string          `json:"hints"`
+	Error    string            `json:"error"`
+}
+
+// loginViaSidecar delegates the login to the headless-browser social-login
+// sidecar and maps the returned session cookies onto a LoginResult.
+func loginViaSidecar(ctx context.Context, p LoginParams) (*LoginResult, error) {
+	endpoint := strings.TrimRight(p.SidecarURL, "/") + "/login"
+	payload, err := json.Marshal(sidecarLoginRequest{
+		Platform:   "x",
+		Username:   p.Username,
+		Password:   p.Password,
+		TOTPSecret: firstNonEmptyLogin(p.TOTPSecret, p.OTP),
+		ProxyURL:   p.ProxyURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	hc := &http.Client{Timeout: 180 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("x: social-login sidecar: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var out sidecarLoginResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("x: social-login sidecar: bad response (status %d): %s", resp.StatusCode, truncateLogin(string(raw), 200))
+	}
+	if !out.OK {
+		detail := out.Error
+		if detail == "" && len(out.Hints) > 0 {
+			detail = strings.Join(out.Hints, "; ")
+		}
+		if detail == "" {
+			detail = "login failed"
+		}
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, detail)
+	}
+	cookies := Cookies{
+		AuthToken: out.Cookies["auth_token"],
+		CT0:       out.Cookies["ct0"],
+		Twid:      out.Cookies["twid"],
+		KDT:       out.Cookies["kdt"],
+	}
+	if cookies.AuthToken == "" || cookies.CT0 == "" {
+		return nil, fmt.Errorf("%w: sidecar returned no session (auth_token/ct0 missing)", ErrUnauthorized)
+	}
+	return &LoginResult{Cookies: cookies, UserAgent: p.UserAgent}, nil
+}
+
+func firstNonEmptyLogin(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type loginFlow struct {
