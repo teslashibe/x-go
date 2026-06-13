@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -54,6 +55,15 @@ type LoginParams struct {
 	UserAgent string
 	// ProxyURL routes the login through an HTTP/S proxy (residential egress).
 	ProxyURL string
+	// SidecarURL, when set, delegates the login to the headless-browser
+	// social-login sidecar (Playwright drives x.com/i/flow/login). X's
+	// onboarding edge fingerprints browser-only behavioral signals (HTTP/2
+	// frame order, ui_metrics execution, Arkose) that a pure-Go client can't
+	// reproduce — it 399s the credential step ("Could not log you in now")
+	// even with correct payloads + Chrome JA3. A real browser emits those
+	// signals natively, so the sidecar is the reliable path; the pure-Go flow
+	// below stays as a fallback. Mirrors instagram-go / tiktok-go.
+	SidecarURL string
 }
 
 // LoginResult is the minted session, ready for New.
@@ -73,7 +83,24 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		ua = defaultUserAgent
 	}
 
+	// Preferred path: drive the real web login through the headless-browser
+	// social-login sidecar (beats X's behavioral anti-bot, which 399s the
+	// pure-Go onboarding flow at the credential step).
+	if strings.TrimSpace(p.SidecarURL) != "" {
+		return loginViaSidecar(ctx, p)
+	}
+
 	jar, _ := cookiejar.New(nil)
+	// X's onboarding edge fingerprints the TLS ClientHello (JA3) + HTTP stack
+	// and 399s ("Could not log you in now") plain-Go clients at the credential
+	// step, even when the subtask payloads are correct. Present Chrome's
+	// ClientHello via the shared impersonate transport — the same posture
+	// reddit-go's login uses to clear its JA3 block.
+	// Pure-Go fallback transport. The sidecar path above is the reliable one
+	// for X; this onboarding flow is kept for completeness and is 399'd by X's
+	// behavioral anti-bot at the credential step (no browser signals). No JA3
+	// impersonation here on purpose: it doesn't clear the block and would add a
+	// private dependency that the module's CI can't resolve.
 	hc := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 	if p.ProxyURL != "" {
 		if parsed, err := url.Parse(p.ProxyURL); err == nil {
@@ -119,6 +146,10 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		if done {
 			break
 		}
+		// Pace between subtasks: the real web client has human-scale gaps
+		// between onboarding steps, and a burst of rapid task.json POSTs is
+		// itself an automation signal that can trigger extra challenges.
+		fl.pace(ctx)
 		flowToken, subtasks, err = fl.task(ctx, onboardURL, taskBody(flowToken, input))
 		if err != nil {
 			return nil, fmt.Errorf("x: subtask step: %w", err)
@@ -130,6 +161,86 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		return nil, fmt.Errorf("%w: login did not establish a session (auth_token/ct0 missing)", ErrUnauthorized)
 	}
 	return &LoginResult{Cookies: cookies, UserAgent: ua}, nil
+}
+
+// --- social-login sidecar path -------------------------------------------
+
+type sidecarLoginRequest struct {
+	Platform   string `json:"platform"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	TOTPSecret string `json:"totpSecret,omitempty"`
+	ProxyURL   string `json:"proxyUrl,omitempty"`
+}
+
+type sidecarLoginResponse struct {
+	OK       bool              `json:"ok"`
+	FinalURL string            `json:"finalUrl"`
+	Cookies  map[string]string `json:"cookies"`
+	Hints    []string          `json:"hints"`
+	Error    string            `json:"error"`
+}
+
+// loginViaSidecar delegates the login to the headless-browser social-login
+// sidecar and maps the returned session cookies onto a LoginResult.
+func loginViaSidecar(ctx context.Context, p LoginParams) (*LoginResult, error) {
+	endpoint := strings.TrimRight(p.SidecarURL, "/") + "/login"
+	payload, err := json.Marshal(sidecarLoginRequest{
+		Platform:   "x",
+		Username:   p.Username,
+		Password:   p.Password,
+		TOTPSecret: firstNonEmptyLogin(p.TOTPSecret, p.OTP),
+		ProxyURL:   p.ProxyURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	hc := &http.Client{Timeout: 180 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("x: social-login sidecar: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var out sidecarLoginResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("x: social-login sidecar: bad response (status %d): %s", resp.StatusCode, truncateLogin(string(raw), 200))
+	}
+	if !out.OK {
+		detail := out.Error
+		if detail == "" && len(out.Hints) > 0 {
+			detail = strings.Join(out.Hints, "; ")
+		}
+		if detail == "" {
+			detail = "login failed"
+		}
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, detail)
+	}
+	cookies := Cookies{
+		AuthToken: out.Cookies["auth_token"],
+		CT0:       out.Cookies["ct0"],
+		Twid:      out.Cookies["twid"],
+		KDT:       out.Cookies["kdt"],
+	}
+	if cookies.AuthToken == "" || cookies.CT0 == "" {
+		return nil, fmt.Errorf("%w: sidecar returned no session (auth_token/ct0 missing)", ErrUnauthorized)
+	}
+	return &LoginResult{Cookies: cookies, UserAgent: p.UserAgent}, nil
+}
+
+func firstNonEmptyLogin(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type loginFlow struct {
@@ -145,6 +256,16 @@ type loginFlow struct {
 func (f *loginFlow) logf(format string, args ...interface{}) {
 	if f.debug {
 		fmt.Fprintf(os.Stderr, "[x-login-debug] "+format+"\n", args...)
+	}
+}
+
+// pace sleeps a short, jittered interval between onboarding steps so the flow
+// has human-scale gaps rather than a rapid POST burst. Honors ctx cancellation.
+func (f *loginFlow) pace(ctx context.Context) {
+	d := 700*time.Millisecond + time.Duration(rand.Intn(1100))*time.Millisecond
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
 	}
 }
 
@@ -186,9 +307,19 @@ func (f *loginFlow) task(ctx context.Context, target string, body []byte) (strin
 	req.Header.Set("Authorization", "Bearer "+bearerToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", f.ua)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("X-Guest-Token", f.guest)
 	req.Header.Set("X-Twitter-Active-User", "yes")
 	req.Header.Set("X-Twitter-Client-Language", "en")
+	// Browser-fidelity headers: the onboarding edge 399s requests that don't
+	// look like the web client's XHR. The real client always sends Origin +
+	// Referer of x.com and the Sec-Fetch-* triple on these task.json POSTs.
+	req.Header.Set("Origin", baseURL)
+	req.Header.Set("Referer", baseURL+"/")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	// ct0 cookie doubles as the CSRF header once set.
 	if u, _ := url.Parse(apiBase); u != nil {
 		for _, ck := range f.hc.Jar.Cookies(u) {
@@ -204,21 +335,41 @@ func (f *loginFlow) task(ctx context.Context, target string, body []byte) (strin
 	}
 	// X-Client-Transaction-Id: the onboarding edge validates this to reject
 	// non-browser clients (the main 399 cause for the classic flow).
+	tidSet := false
 	if f.txc != nil {
 		if u, err := url.Parse(target); err == nil {
 			if tid := f.txc.generateTransactionID(http.MethodPost, u.Path); tid != "" {
 				req.Header.Set("X-Client-Transaction-Id", tid)
+				tidSet = true
 			}
 		}
 	}
+	f.logf("POST %s att=%v ct0=%v tid=%v", target, f.att != "", req.Header.Get("X-Csrf-Token") != "", tidSet)
 
 	resp, err := f.hc.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
 	defer resp.Body.Close()
+	// X issues the att anti-automation token on the first onboarding response
+	// and expects it echoed on every subsequent step. On api.x.com it arrives
+	// as a Set-Cookie (not a response header); the browser echoes it back as
+	// the `att` request header. Capture it from either place.
 	if a := resp.Header.Get("att"); a != "" {
 		f.att = a
+	} else {
+		for _, ck := range resp.Cookies() {
+			if ck.Name == "att" && ck.Value != "" {
+				f.att = ck.Value
+			}
+		}
+	}
+	if f.debug {
+		setCookies := make([]string, 0)
+		for _, ck := range resp.Cookies() {
+			setCookies = append(setCookies, ck.Name)
+		}
+		f.logf("  <- status=%d att_hdr=%v set-cookie=%v", resp.StatusCode, resp.Header.Get("att") != "", setCookies)
 	}
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != http.StatusOK {
@@ -246,7 +397,7 @@ func (f *loginFlow) task(ctx context.Context, target string, body []byte) (strin
 }
 
 type subtask struct {
-	SubtaskID        string `json:"subtask_id"`
+	SubtaskID         string `json:"subtask_id"`
 	JSInstrumentation *struct {
 		URL string `json:"url"`
 	} `json:"js_instrumentation,omitempty"`
@@ -269,7 +420,7 @@ func (f *loginFlow) respond(ctx context.Context, subtasks []subtask) (json.RawMe
 			}
 			f.logf("js_instrumentation hasURL=%v responseLen=%d", hasURL, len(resp))
 			return mustJSON(map[string]any{
-				"subtask_id":        s.SubtaskID,
+				"subtask_id":         s.SubtaskID,
 				"js_instrumentation": map[string]any{"response": resp, "link": "next_link"},
 			}), false, nil
 		case "LoginEnterUserIdentifierSSO":
@@ -290,8 +441,8 @@ func (f *loginFlow) respond(ctx context.Context, subtasks []subtask) (json.RawMe
 			}), false, nil
 		case "LoginEnterAlternateIdentifierSubtask":
 			return mustJSON(map[string]any{
-				"subtask_id":   s.SubtaskID,
-				"enter_text":   map[string]any{"text": f.params.Username, "link": "next_link"},
+				"subtask_id": s.SubtaskID,
+				"enter_text": map[string]any{"text": f.params.Username, "link": "next_link"},
 			}), false, nil
 		case "LoginTwoFactorAuthChallenge":
 			code, err := f.twoFactorCode()
@@ -307,7 +458,7 @@ func (f *loginFlow) respond(ctx context.Context, subtasks []subtask) (json.RawMe
 			return nil, false, fmt.Errorf("%w: account verification (LoginAcid) required; supply OTP", ErrUnauthorized)
 		case "AccountDuplicationCheck":
 			return mustJSON(map[string]any{
-				"subtask_id":             s.SubtaskID,
+				"subtask_id":              s.SubtaskID,
 				"check_logged_in_account": map[string]any{"link": "AccountDuplicationCheck_false"},
 			}), false, nil
 		case "LoginSuccessSubtask", "AccountState":
@@ -387,47 +538,47 @@ func loginInitBody() []byte {
 			},
 		},
 		"subtask_versions": map[string]any{
-			"action_list":                            2,
-			"alert_dialog":                           1,
-			"app_download_cta":                       1,
-			"check_logged_in_account":                1,
-			"choice_selection":                       3,
-			"contacts_live_sync_permission_prompt":   0,
-			"cta":                                    7,
-			"email_verification":                     2,
-			"end_flow":                               1,
-			"enter_date":                             1,
-			"enter_email":                            2,
-			"enter_password":                         5,
-			"enter_phone":                            2,
-			"enter_recaptcha":                        1,
-			"enter_text":                             5,
-			"enter_username":                         2,
-			"generic_urt":                            3,
-			"in_app_notification":                    1,
-			"interest_picker":                        3,
-			"js_instrumentation":                     1,
-			"menu_dialog":                            1,
-			"notifications_permission_prompt":        2,
-			"open_account":                           2,
-			"open_home_timeline":                     1,
-			"open_link":                              1,
-			"phone_verification":                     4,
-			"privacy_options":                        1,
-			"security_key":                           3,
-			"select_avatar":                          4,
-			"select_banner":                          2,
-			"settings_list":                          7,
-			"show_code":                              1,
-			"sign_up":                                2,
-			"sign_up_review":                         4,
-			"tweet_selection_urt":                    1,
-			"update_users":                           1,
-			"upload_media":                           1,
-			"user_recommendations_list":              4,
-			"user_recommendations_urt":               1,
-			"wait_spinner":                           3,
-			"web_modal":                              1,
+			"action_list":                          2,
+			"alert_dialog":                         1,
+			"app_download_cta":                     1,
+			"check_logged_in_account":              1,
+			"choice_selection":                     3,
+			"contacts_live_sync_permission_prompt": 0,
+			"cta":                                  7,
+			"email_verification":                   2,
+			"end_flow":                             1,
+			"enter_date":                           1,
+			"enter_email":                          2,
+			"enter_password":                       5,
+			"enter_phone":                          2,
+			"enter_recaptcha":                      1,
+			"enter_text":                           5,
+			"enter_username":                       2,
+			"generic_urt":                          3,
+			"in_app_notification":                  1,
+			"interest_picker":                      3,
+			"js_instrumentation":                   1,
+			"menu_dialog":                          1,
+			"notifications_permission_prompt":      2,
+			"open_account":                         2,
+			"open_home_timeline":                   1,
+			"open_link":                            1,
+			"phone_verification":                   4,
+			"privacy_options":                      1,
+			"security_key":                         3,
+			"select_avatar":                        4,
+			"select_banner":                        2,
+			"settings_list":                        7,
+			"show_code":                            1,
+			"sign_up":                              2,
+			"sign_up_review":                       4,
+			"tweet_selection_urt":                  1,
+			"update_users":                         1,
+			"upload_media":                         1,
+			"user_recommendations_list":            4,
+			"user_recommendations_urt":             1,
+			"wait_spinner":                         3,
+			"web_modal":                            1,
 		},
 	})
 }
