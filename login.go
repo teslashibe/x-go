@@ -13,8 +13,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	impersonate "github.com/teslashibe/impersonate-go"
 )
 
 // Credential login for X (#268).
@@ -98,11 +96,19 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 	// step, even when the subtask payloads are correct. Present Chrome's
 	// ClientHello via the shared impersonate transport — the same posture
 	// reddit-go's login uses to clear its JA3 block.
-	// Pure-Go fallback transport: present Chrome's JA3 (the sidecar path above
-	// is the reliable one for X; this fallback is kept for completeness and is
-	// 399'd by X's behavioral anti-bot at the credential step).
-	hc := impersonate.NewClient(impersonate.Options{}, jar, 30*time.Second)
-	_ = p.ProxyURL
+	// Pure-Go fallback transport. The sidecar path above is the reliable one
+	// for X; this onboarding flow is kept for completeness and is 399'd by X's
+	// behavioral anti-bot at the credential step (no browser signals). No JA3
+	// impersonation here on purpose: it doesn't clear the block and would add a
+	// private dependency that the module's CI can't resolve.
+	hc := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	if p.ProxyURL != "" {
+		if parsed, err := url.Parse(p.ProxyURL); err == nil {
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.Proxy = http.ProxyURL(parsed)
+			hc.Transport = tr
+		}
+	}
 
 	fl := &loginFlow{hc: hc, ua: ua, params: p, debug: strings.TrimSpace(os.Getenv("X_LOGIN_DEBUG")) != ""}
 
