@@ -35,6 +35,7 @@ func main() {
 		TOTPSecret: strings.TrimSpace(os.Getenv("X_TOTP_SECRET")),
 		OTP:        strings.TrimSpace(os.Getenv("X_OTP")),
 		ProxyURL:   strings.TrimSpace(os.Getenv("X_PROXY_URL")),
+		InitialCookieHeader: strings.TrimSpace(os.Getenv("X_INITIAL_COOKIE_HEADER")),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "login: %v\n", err)

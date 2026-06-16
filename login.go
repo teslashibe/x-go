@@ -55,6 +55,11 @@ type LoginParams struct {
 	UserAgent string
 	// ProxyURL routes the login through an HTTP/S proxy (residential egress).
 	ProxyURL string
+	// InitialCookieHeader seeds the onboarding cookie jar with non-auth browser
+	// cookies (for example cf_clearance/guest_id/__cf_bm) captured from a real
+	// browser session. Do not include auth_token or ct0 here; those are expected
+	// to be minted by Login.
+	InitialCookieHeader string
 	// SidecarURL, when set, delegates the login to the headless-browser
 	// social-login sidecar (Playwright drives x.com/i/flow/login). X's
 	// onboarding edge fingerprints browser-only behavioral signals (HTTP/2
@@ -91,6 +96,9 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 	}
 
 	jar, _ := cookiejar.New(nil)
+	if strings.TrimSpace(p.InitialCookieHeader) != "" {
+		seedInitialCookies(jar, p.InitialCookieHeader)
+	}
 	// X's onboarding edge fingerprints the TLS ClientHello (JA3) + HTTP stack
 	// and 399s ("Could not log you in now") plain-Go clients at the credential
 	// step, even when the subtask payloads are correct. Present Chrome's
@@ -161,6 +169,30 @@ func Login(ctx context.Context, p LoginParams) (*LoginResult, error) {
 		return nil, fmt.Errorf("%w: login did not establish a session (auth_token/ct0 missing)", ErrUnauthorized)
 	}
 	return &LoginResult{Cookies: cookies, UserAgent: ua}, nil
+}
+
+func seedInitialCookies(jar *cookiejar.Jar, header string) {
+	var cookies []*http.Cookie
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(k)
+		if name == "" || name == "auth_token" || name == "ct0" || name == "twid" {
+			continue
+		}
+		cookies = append(cookies, &http.Cookie{Name: name, Value: strings.Trim(v, `"`)})
+	}
+	for _, rawURL := range []string{baseURL, apiBase, "https://twitter.com"} {
+		if u, err := url.Parse(rawURL); err == nil {
+			jar.SetCookies(u, cookies)
+		}
+	}
 }
 
 // --- social-login sidecar path -------------------------------------------
@@ -311,7 +343,12 @@ func (f *loginFlow) task(ctx context.Context, target string, body []byte) (strin
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("X-Guest-Token", f.guest)
 	req.Header.Set("X-Twitter-Active-User", "yes")
+	req.Header.Set("X-Twitter-Auth-Type", "OAuth2Client")
 	req.Header.Set("X-Twitter-Client-Language", "en")
+	req.Header.Set("Sec-CH-UA", `"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"`)
+	req.Header.Set("Sec-CH-UA-Mobile", "?0")
+	req.Header.Set("Sec-CH-UA-Platform", `"macOS"`)
+	req.Header.Set("Priority", "u=1, i")
 	// Browser-fidelity headers: the onboarding edge 399s requests that don't
 	// look like the web client's XHR. The real client always sends Origin +
 	// Referer of x.com and the Sec-Fetch-* triple on these task.json POSTs.
@@ -319,7 +356,7 @@ func (f *loginFlow) task(ctx context.Context, target string, body []byte) (strin
 	req.Header.Set("Referer", baseURL+"/")
 	req.Header.Set("Sec-Fetch-Dest", "empty")
 	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Sec-Fetch-Site", "same-site")
 	// ct0 cookie doubles as the CSRF header once set.
 	if u, _ := url.Parse(apiBase); u != nil {
 		for _, ck := range f.hc.Jar.Cookies(u) {
