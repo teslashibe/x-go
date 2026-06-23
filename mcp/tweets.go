@@ -143,14 +143,14 @@ func projectTweetDetail(detail *x.TweetDetail, view string, maxReplies *int) (tw
 		limit = replyCountSeen
 	}
 
-	tweet, err := projectTweet(&detail.Tweet, view)
+	tweet, err := projectTweetForDetail(&detail.Tweet, view)
 	if err != nil {
 		return tweetDetailView{}, err
 	}
 
 	replies := make([]any, 0, limit)
 	for i := 0; i < limit; i++ {
-		reply, err := projectTweet(&detail.Replies[i], view)
+		reply, err := projectTweetForDetail(&detail.Replies[i], view)
 		if err != nil {
 			return tweetDetailView{}, err
 		}
@@ -164,6 +164,13 @@ func projectTweetDetail(detail *x.TweetDetail, view string, maxReplies *int) (tw
 		ReplyCountReturned: len(replies),
 		ReplyCountSeen:     replyCountSeen,
 	}, nil
+}
+
+func projectTweetForDetail(tw *x.Tweet, view string) (any, error) {
+	if view == "metrics" {
+		return engagementCounts(tw), nil
+	}
+	return projectTweet(tw, view)
 }
 
 // GetUserTweetsInput is the typed input for x_get_user_tweets.

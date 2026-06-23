@@ -225,23 +225,20 @@ func TestProjectTweetDetailMetricsView(t *testing.T) {
 		t.Fatalf("projectTweetDetail(metrics) error: %v", err)
 	}
 
-	tweet, ok := got.Tweet.(tweetMetricsView)
+	tweet, ok := got.Tweet.(tweetEngagementCounts)
 	if !ok {
-		t.Fatalf("Tweet returned %T, want tweetMetricsView", got.Tweet)
+		t.Fatalf("Tweet returned %T, want tweetEngagementCounts", got.Tweet)
 	}
-	assertEngagementCounts(t, tweet.tweetEngagementCounts, &detail.Tweet)
+	assertEngagementCounts(t, tweet, &detail.Tweet)
 	if len(got.Replies) != 1 {
 		t.Fatalf("len(Replies) = %d, want 1", len(got.Replies))
 	}
-	reply, ok := got.Replies[0].(tweetMetricsView)
+	reply, ok := got.Replies[0].(tweetEngagementCounts)
 	if !ok {
-		t.Fatalf("Replies[0] returned %T, want tweetMetricsView", got.Replies[0])
+		t.Fatalf("Replies[0] returned %T, want tweetEngagementCounts", got.Replies[0])
 	}
-	assertEngagementCounts(t, reply.tweetEngagementCounts, &detail.Replies[0])
+	assertEngagementCounts(t, reply, &detail.Replies[0])
 	assertJSONKeys(t, got.Tweet, []string{
-		"id",
-		"authorScreenName",
-		"createdAt",
 		"likeCount",
 		"retweetCount",
 		"replyCount",
