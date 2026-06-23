@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teslashibe/mcptool"
 	x "github.com/teslashibe/x-go"
 )
 
@@ -135,6 +136,119 @@ func TestProjectTweetInvalidView(t *testing.T) {
 	_, err := projectTweet(testTweet(), "summary")
 	if !errors.Is(err, x.ErrInvalidParams) {
 		t.Fatalf("projectTweet(invalid) error = %v, want ErrInvalidParams", err)
+	}
+}
+
+func TestProjectTweetPageDefaultAndFullReturnTweetPage(t *testing.T) {
+	tweets := testTweets(2)
+
+	for _, view := range []string{"", "full"} {
+		got, err := projectTweetPage(tweets, "next", 20, view)
+		if err != nil {
+			t.Fatalf("projectTweetPage(view=%q) error: %v", view, err)
+		}
+
+		page, ok := got.(mcptool.Page[x.Tweet])
+		if !ok {
+			t.Fatalf("projectTweetPage(view=%q) returned %T, want mcptool.Page[x.Tweet]", view, got)
+		}
+		if !reflect.DeepEqual(page.Items, tweets) {
+			t.Errorf("Items = %#v, want %#v", page.Items, tweets)
+		}
+		if page.NextCursor != "next" {
+			t.Errorf("NextCursor = %q, want next", page.NextCursor)
+		}
+		if page.Truncated {
+			t.Error("Truncated = true, want false")
+		}
+	}
+}
+
+func TestProjectTweetPageCompactView(t *testing.T) {
+	tweets := testTweets(2)
+
+	got, err := projectTweetPage(tweets, "next", 20, "compact")
+	if err != nil {
+		t.Fatalf("projectTweetPage(compact) error: %v", err)
+	}
+
+	page, ok := got.(mcptool.Page[tweetCompactView])
+	if !ok {
+		t.Fatalf("projectTweetPage(compact) returned %T, want mcptool.Page[tweetCompactView]", got)
+	}
+	if len(page.Items) != len(tweets) {
+		t.Fatalf("len(Items) = %d, want %d", len(page.Items), len(tweets))
+	}
+	for i := range tweets {
+		if page.Items[i].ID != tweets[i].ID {
+			t.Errorf("Items[%d].ID = %q, want %q", i, page.Items[i].ID, tweets[i].ID)
+		}
+		if page.Items[i].Text != tweets[i].Text {
+			t.Errorf("Items[%d].Text = %q, want %q", i, page.Items[i].Text, tweets[i].Text)
+		}
+		assertEngagementCounts(t, page.Items[i].tweetEngagementCounts, &tweets[i])
+	}
+	if page.NextCursor != "next" {
+		t.Errorf("NextCursor = %q, want next", page.NextCursor)
+	}
+}
+
+func TestProjectTweetPageMetricsView(t *testing.T) {
+	tweets := testTweets(2)
+
+	got, err := projectTweetPage(tweets, "next", 20, "metrics")
+	if err != nil {
+		t.Fatalf("projectTweetPage(metrics) error: %v", err)
+	}
+
+	page, ok := got.(mcptool.Page[tweetMetricsView])
+	if !ok {
+		t.Fatalf("projectTweetPage(metrics) returned %T, want mcptool.Page[tweetMetricsView]", got)
+	}
+	if len(page.Items) != len(tweets) {
+		t.Fatalf("len(Items) = %d, want %d", len(page.Items), len(tweets))
+	}
+	for i := range tweets {
+		if page.Items[i].ID != tweets[i].ID {
+			t.Errorf("Items[%d].ID = %q, want %q", i, page.Items[i].ID, tweets[i].ID)
+		}
+		if page.Items[i].AuthorScreenName != tweets[i].AuthorScreenName {
+			t.Errorf("Items[%d].AuthorScreenName = %q, want %q", i, page.Items[i].AuthorScreenName, tweets[i].AuthorScreenName)
+		}
+		assertEngagementCounts(t, page.Items[i].tweetEngagementCounts, &tweets[i])
+	}
+	if page.NextCursor != "next" {
+		t.Errorf("NextCursor = %q, want next", page.NextCursor)
+	}
+}
+
+func TestProjectTweetPagePreservesPaginationLimit(t *testing.T) {
+	tweets := testTweets(3)
+
+	got, err := projectTweetPage(tweets, "next", 2, "compact")
+	if err != nil {
+		t.Fatalf("projectTweetPage(compact) error: %v", err)
+	}
+
+	page, ok := got.(mcptool.Page[tweetCompactView])
+	if !ok {
+		t.Fatalf("projectTweetPage(compact) returned %T, want mcptool.Page[tweetCompactView]", got)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(page.Items))
+	}
+	if page.NextCursor != "next" {
+		t.Errorf("NextCursor = %q, want next", page.NextCursor)
+	}
+	if !page.Truncated {
+		t.Error("Truncated = false, want true")
+	}
+}
+
+func TestProjectTweetPageInvalidView(t *testing.T) {
+	_, err := projectTweetPage(testTweets(1), "next", 20, "summary")
+	if !errors.Is(err, x.ErrInvalidParams) {
+		t.Fatalf("projectTweetPage(invalid) error = %v, want ErrInvalidParams", err)
 	}
 }
 
@@ -338,6 +452,19 @@ func testTweet() *x.Tweet {
 		MentionedUsers:   []string{"agent"},
 		URLs:             []string{"https://example.com"},
 	}
+}
+
+func testTweets(n int) []x.Tweet {
+	tweets := make([]x.Tweet, n)
+	for i := range tweets {
+		tw := *testTweet()
+		tw.ID = fmt.Sprintf("tweet-%d", i)
+		tw.AuthorScreenName = fmt.Sprintf("author%d", i)
+		tw.Text = fmt.Sprintf("tweet text %d", i)
+		tw.LikeCount += i
+		tweets[i] = tw
+	}
+	return tweets
 }
 
 func testTweetDetail(replyCount int) *x.TweetDetail {

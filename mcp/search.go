@@ -12,6 +12,7 @@ type SearchTweetsInput struct {
 	Query      string `json:"query" jsonschema:"description=raw X search query (supports operators like from:user since:YYYY-MM-DD),required"`
 	Count      int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor     string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View       string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 	SearchType string `json:"search_type,omitempty" jsonschema:"description=search tab; allowed: Top,Latest,People,Media,Lists,default=Top"`
 	Since      string `json:"since,omitempty" jsonschema:"description=only tweets on or after this date (YYYY-MM-DD)"`
 	Until      string `json:"until,omitempty" jsonschema:"description=only tweets on or before this date (YYYY-MM-DD)"`
@@ -36,7 +37,7 @@ func searchTweets(ctx context.Context, c *x.Client, in SearchTweetsInput) (any, 
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 // SearchUsersInput is the typed input for x_search_users.
@@ -82,6 +83,7 @@ type AdvancedSearchTweetsInput struct {
 
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View   string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func advancedSearchTweets(ctx context.Context, c *x.Client, in AdvancedSearchTweetsInput) (any, error) {
@@ -116,7 +118,7 @@ func advancedSearchTweets(ctx context.Context, c *x.Client, in AdvancedSearchTwe
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 var searchTools = []mcptool.Tool{

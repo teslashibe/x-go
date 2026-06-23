@@ -21,6 +21,7 @@ type GetListTimelineInput struct {
 	ListID string `json:"list_id" jsonschema:"description=numeric X list ID,required"`
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View   string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func getListTimeline(ctx context.Context, c *x.Client, in GetListTimelineInput) (any, error) {
@@ -32,7 +33,7 @@ func getListTimeline(ctx context.Context, c *x.Client, in GetListTimelineInput) 
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 // GetListMembersInput is the typed input for x_get_list_members.

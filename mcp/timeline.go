@@ -11,6 +11,7 @@ import (
 type HomeTimelineInput struct {
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View   string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func homeTimeline(ctx context.Context, c *x.Client, in HomeTimelineInput) (any, error) {
@@ -22,13 +23,14 @@ func homeTimeline(ctx context.Context, c *x.Client, in HomeTimelineInput) (any, 
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 // HomeLatestTimelineInput is the typed input for x_home_latest_timeline.
 type HomeLatestTimelineInput struct {
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View   string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func homeLatestTimeline(ctx context.Context, c *x.Client, in HomeLatestTimelineInput) (any, error) {
@@ -40,7 +42,7 @@ func homeLatestTimeline(ctx context.Context, c *x.Client, in HomeLatestTimelineI
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 var timelineTools = []mcptool.Tool{
