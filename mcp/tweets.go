@@ -87,6 +87,46 @@ func projectTweet(tw *x.Tweet, view string) (any, error) {
 	}
 }
 
+func projectTweetPage(tweets []x.Tweet, nextCursor string, limit int, view string) (any, error) {
+	switch view {
+	case "", "full":
+		return mcptool.PageOf(tweets, nextCursor, limit), nil
+	case "metrics":
+		items := make([]tweetMetricsView, len(tweets))
+		for i := range tweets {
+			items[i] = tweetMetricsView{
+				ID:                    tweets[i].ID,
+				AuthorScreenName:      tweets[i].AuthorScreenName,
+				CreatedAt:             tweets[i].CreatedAt,
+				tweetEngagementCounts: engagementCounts(&tweets[i]),
+			}
+		}
+		return mcptool.PageOf(items, nextCursor, limit), nil
+	case "compact":
+		items := make([]tweetCompactView, len(tweets))
+		for i := range tweets {
+			items[i] = tweetCompactView{
+				ID:                    tweets[i].ID,
+				ConversationID:        tweets[i].ConversationID,
+				AuthorID:              tweets[i].AuthorID,
+				AuthorScreenName:      tweets[i].AuthorScreenName,
+				AuthorName:            tweets[i].AuthorName,
+				Text:                  tweets[i].Text,
+				CreatedAt:             tweets[i].CreatedAt,
+				IsRetweet:             tweets[i].IsRetweet,
+				IsQuote:               tweets[i].IsQuote,
+				IsReply:               tweets[i].IsReply,
+				InReplyToID:           tweets[i].InReplyToID,
+				QuotedTweetID:         tweets[i].QuotedTweetID,
+				tweetEngagementCounts: engagementCounts(&tweets[i]),
+			}
+		}
+		return mcptool.PageOf(items, nextCursor, limit), nil
+	default:
+		return nil, fmt.Errorf("%w: view must be one of full, compact, metrics", x.ErrInvalidParams)
+	}
+}
+
 func engagementCounts(tw *x.Tweet) tweetEngagementCounts {
 	return tweetEngagementCounts{
 		LikeCount:     tw.LikeCount,
@@ -112,6 +152,7 @@ type GetUserTweetsInput struct {
 	UserID string `json:"user_id" jsonschema:"description=numeric X user ID whose tweets to fetch,required"`
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
+	View   string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func getUserTweets(ctx context.Context, c *x.Client, in GetUserTweetsInput) (any, error) {
@@ -123,7 +164,7 @@ func getUserTweets(ctx context.Context, c *x.Client, in GetUserTweetsInput) (any
 	if limit <= 0 {
 		limit = 20
 	}
-	return mcptool.PageOf(res.Tweets, res.NextCursor, limit), nil
+	return projectTweetPage(res.Tweets, res.NextCursor, limit, in.View)
 }
 
 var tweetTools = []mcptool.Tool{
