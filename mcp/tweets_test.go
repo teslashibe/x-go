@@ -252,6 +252,180 @@ func TestProjectTweetPageInvalidView(t *testing.T) {
 	}
 }
 
+func TestProjectTweetDetailDefaultMaxReplies(t *testing.T) {
+	detail := testTweetDetail(25)
+
+	got, err := projectTweetDetail(detail, "", nil)
+	if err != nil {
+		t.Fatalf("projectTweetDetail(default) error: %v", err)
+	}
+
+	if got.Tweet != &detail.Tweet {
+		t.Fatalf("Tweet = %#v, want original tweet pointer", got.Tweet)
+	}
+	if len(got.Replies) != defaultTweetDetailMaxReplies {
+		t.Fatalf("len(Replies) = %d, want %d", len(got.Replies), defaultTweetDetailMaxReplies)
+	}
+	if !got.RepliesTruncated {
+		t.Fatal("RepliesTruncated = false, want true")
+	}
+	if got.ReplyCountReturned != defaultTweetDetailMaxReplies {
+		t.Errorf("ReplyCountReturned = %d, want %d", got.ReplyCountReturned, defaultTweetDetailMaxReplies)
+	}
+	if got.ReplyCountSeen != 25 {
+		t.Errorf("ReplyCountSeen = %d, want 25", got.ReplyCountSeen)
+	}
+}
+
+func TestProjectTweetDetailMaxRepliesZero(t *testing.T) {
+	detail := testTweetDetail(3)
+	maxReplies := 0
+
+	got, err := projectTweetDetail(detail, "", &maxReplies)
+	if err != nil {
+		t.Fatalf("projectTweetDetail(max_replies=0) error: %v", err)
+	}
+
+	if len(got.Replies) != 0 {
+		t.Fatalf("len(Replies) = %d, want 0", len(got.Replies))
+	}
+	if !got.RepliesTruncated {
+		t.Fatal("RepliesTruncated = false, want true")
+	}
+	if got.ReplyCountReturned != 0 {
+		t.Errorf("ReplyCountReturned = %d, want 0", got.ReplyCountReturned)
+	}
+	if got.ReplyCountSeen != 3 {
+		t.Errorf("ReplyCountSeen = %d, want 3", got.ReplyCountSeen)
+	}
+	assertJSONKeys(t, got, []string{
+		"tweet",
+		"replies",
+		"replies_truncated",
+		"reply_count_returned",
+		"reply_count_seen",
+	})
+}
+
+func TestProjectTweetDetailNotTruncated(t *testing.T) {
+	detail := testTweetDetail(3)
+	maxReplies := 10
+
+	got, err := projectTweetDetail(detail, "", &maxReplies)
+	if err != nil {
+		t.Fatalf("projectTweetDetail(not truncated) error: %v", err)
+	}
+
+	if len(got.Replies) != 3 {
+		t.Fatalf("len(Replies) = %d, want 3", len(got.Replies))
+	}
+	if got.RepliesTruncated {
+		t.Fatal("RepliesTruncated = true, want false")
+	}
+	if got.ReplyCountReturned != 3 {
+		t.Errorf("ReplyCountReturned = %d, want 3", got.ReplyCountReturned)
+	}
+	if got.ReplyCountSeen != 3 {
+		t.Errorf("ReplyCountSeen = %d, want 3", got.ReplyCountSeen)
+	}
+}
+
+func TestProjectTweetDetailMetricsView(t *testing.T) {
+	detail := testTweetDetail(2)
+	maxReplies := 1
+
+	got, err := projectTweetDetail(detail, "metrics", &maxReplies)
+	if err != nil {
+		t.Fatalf("projectTweetDetail(metrics) error: %v", err)
+	}
+
+	tweet, ok := got.Tweet.(tweetEngagementCounts)
+	if !ok {
+		t.Fatalf("Tweet returned %T, want tweetEngagementCounts", got.Tweet)
+	}
+	assertEngagementCounts(t, tweet, &detail.Tweet)
+	if len(got.Replies) != 1 {
+		t.Fatalf("len(Replies) = %d, want 1", len(got.Replies))
+	}
+	reply, ok := got.Replies[0].(tweetEngagementCounts)
+	if !ok {
+		t.Fatalf("Replies[0] returned %T, want tweetEngagementCounts", got.Replies[0])
+	}
+	assertEngagementCounts(t, reply, &detail.Replies[0])
+	assertJSONKeys(t, got.Tweet, []string{
+		"likeCount",
+		"retweetCount",
+		"replyCount",
+		"quoteCount",
+		"bookmarkCount",
+		"viewCount",
+	})
+}
+
+func TestProjectTweetDetailCompactView(t *testing.T) {
+	detail := testTweetDetail(2)
+	maxReplies := 2
+
+	got, err := projectTweetDetail(detail, "compact", &maxReplies)
+	if err != nil {
+		t.Fatalf("projectTweetDetail(compact) error: %v", err)
+	}
+
+	tweet, ok := got.Tweet.(tweetCompactView)
+	if !ok {
+		t.Fatalf("Tweet returned %T, want tweetCompactView", got.Tweet)
+	}
+	if tweet.Text != detail.Tweet.Text {
+		t.Errorf("Tweet.Text = %q, want %q", tweet.Text, detail.Tweet.Text)
+	}
+	if len(got.Replies) != 2 {
+		t.Fatalf("len(Replies) = %d, want 2", len(got.Replies))
+	}
+	reply, ok := got.Replies[0].(tweetCompactView)
+	if !ok {
+		t.Fatalf("Replies[0] returned %T, want tweetCompactView", got.Replies[0])
+	}
+	if reply.ID != detail.Replies[0].ID {
+		t.Errorf("Replies[0].ID = %q, want %q", reply.ID, detail.Replies[0].ID)
+	}
+	assertJSONKeys(t, got.Tweet, []string{
+		"id",
+		"conversationId",
+		"authorId",
+		"authorScreenName",
+		"authorName",
+		"text",
+		"createdAt",
+		"isRetweet",
+		"isQuote",
+		"isReply",
+		"inReplyToId",
+		"quotedTweetId",
+		"likeCount",
+		"retweetCount",
+		"replyCount",
+		"quoteCount",
+		"bookmarkCount",
+		"viewCount",
+	})
+}
+
+func TestProjectTweetDetailInvalidView(t *testing.T) {
+	_, err := projectTweetDetail(testTweetDetail(1), "summary", nil)
+	if !errors.Is(err, x.ErrInvalidParams) {
+		t.Fatalf("projectTweetDetail(invalid view) error = %v, want ErrInvalidParams", err)
+	}
+}
+
+func TestProjectTweetDetailInvalidMaxReplies(t *testing.T) {
+	for _, maxReplies := range []int{-1, absoluteTweetDetailMaxReplies + 1} {
+		_, err := projectTweetDetail(testTweetDetail(1), "", &maxReplies)
+		if !errors.Is(err, x.ErrInvalidParams) {
+			t.Fatalf("projectTweetDetail(max_replies=%d) error = %v, want ErrInvalidParams", maxReplies, err)
+		}
+	}
+}
+
 func testTweet() *x.Tweet {
 	return &x.Tweet{
 		ID:               "123",
@@ -291,6 +465,22 @@ func testTweets(n int) []x.Tweet {
 		tweets[i] = tw
 	}
 	return tweets
+}
+
+func testTweetDetail(replyCount int) *x.TweetDetail {
+	tweet := *testTweet()
+	replies := make([]x.Tweet, replyCount)
+	for i := range replies {
+		reply := *testTweet()
+		reply.ID = fmt.Sprintf("reply-%d", i)
+		reply.IsReply = true
+		reply.InReplyToID = tweet.ID
+		replies[i] = reply
+	}
+	return &x.TweetDetail{
+		Tweet:   tweet,
+		Replies: replies,
+	}
 }
 
 func assertEngagementCounts(t *testing.T, got tweetEngagementCounts, tw *x.Tweet) {

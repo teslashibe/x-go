@@ -140,11 +140,77 @@ func engagementCounts(tw *x.Tweet) tweetEngagementCounts {
 
 // GetTweetDetailInput is the typed input for x_get_tweet_detail.
 type GetTweetDetailInput struct {
-	TweetID string `json:"tweet_id" jsonschema:"description=numeric tweet ID; result includes the tweet plus its reply thread,required"`
+	TweetID    string `json:"tweet_id" jsonschema:"description=numeric tweet ID; result includes the tweet plus its reply thread,required"`
+	View       string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
+	MaxReplies *int   `json:"max_replies,omitempty" jsonschema:"description=maximum replies to return from the parsed thread,minimum=0,maximum=100,default=20"`
+}
+
+const (
+	defaultTweetDetailMaxReplies  = 20
+	absoluteTweetDetailMaxReplies = 100
+)
+
+type tweetDetailView struct {
+	Tweet              any   `json:"tweet"`
+	Replies            []any `json:"replies"`
+	RepliesTruncated   bool  `json:"replies_truncated"`
+	ReplyCountReturned int   `json:"reply_count_returned"`
+	ReplyCountSeen     int   `json:"reply_count_seen"`
 }
 
 func getTweetDetail(ctx context.Context, c *x.Client, in GetTweetDetailInput) (any, error) {
-	return c.GetTweetDetail(ctx, in.TweetID)
+	detail, err := c.GetTweetDetail(ctx, in.TweetID)
+	if err != nil {
+		return nil, err
+	}
+	return projectTweetDetail(detail, in.View, in.MaxReplies)
+}
+
+func projectTweetDetail(detail *x.TweetDetail, view string, maxReplies *int) (tweetDetailView, error) {
+	limit := defaultTweetDetailMaxReplies
+	if maxReplies != nil {
+		limit = *maxReplies
+	}
+	if limit < 0 {
+		return tweetDetailView{}, fmt.Errorf("%w: max_replies must be at least 0", x.ErrInvalidParams)
+	}
+	if limit > absoluteTweetDetailMaxReplies {
+		return tweetDetailView{}, fmt.Errorf("%w: max_replies must be at most %d", x.ErrInvalidParams, absoluteTweetDetailMaxReplies)
+	}
+
+	replyCountSeen := len(detail.Replies)
+	if limit > replyCountSeen {
+		limit = replyCountSeen
+	}
+
+	tweet, err := projectTweetForDetail(&detail.Tweet, view)
+	if err != nil {
+		return tweetDetailView{}, err
+	}
+
+	replies := make([]any, 0, limit)
+	for i := 0; i < limit; i++ {
+		reply, err := projectTweetForDetail(&detail.Replies[i], view)
+		if err != nil {
+			return tweetDetailView{}, err
+		}
+		replies = append(replies, reply)
+	}
+
+	return tweetDetailView{
+		Tweet:              tweet,
+		Replies:            replies,
+		RepliesTruncated:   replyCountSeen > len(replies),
+		ReplyCountReturned: len(replies),
+		ReplyCountSeen:     replyCountSeen,
+	}, nil
+}
+
+func projectTweetForDetail(tw *x.Tweet, view string) (any, error) {
+	if view == "metrics" {
+		return engagementCounts(tw), nil
+	}
+	return projectTweet(tw, view)
 }
 
 // GetUserTweetsInput is the typed input for x_get_user_tweets.
