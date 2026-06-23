@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/teslashibe/mcptool"
 	x "github.com/teslashibe/x-go"
@@ -10,10 +12,90 @@ import (
 // GetTweetInput is the typed input for x_get_tweet.
 type GetTweetInput struct {
 	TweetID string `json:"tweet_id" jsonschema:"description=numeric tweet ID,required"`
+	View    string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
 }
 
 func getTweet(ctx context.Context, c *x.Client, in GetTweetInput) (any, error) {
-	return c.GetTweet(ctx, in.TweetID)
+	tw, err := c.GetTweet(ctx, in.TweetID)
+	if err != nil {
+		return nil, err
+	}
+	return projectTweet(tw, in.View)
+}
+
+type tweetEngagementCounts struct {
+	LikeCount     int `json:"likeCount"`
+	RetweetCount  int `json:"retweetCount"`
+	ReplyCount    int `json:"replyCount"`
+	QuoteCount    int `json:"quoteCount"`
+	BookmarkCount int `json:"bookmarkCount"`
+	ViewCount     int `json:"viewCount"`
+}
+
+type tweetMetricsView struct {
+	ID               string    `json:"id"`
+	AuthorScreenName string    `json:"authorScreenName"`
+	CreatedAt        time.Time `json:"createdAt"`
+	tweetEngagementCounts
+}
+
+type tweetCompactView struct {
+	ID               string    `json:"id"`
+	ConversationID   string    `json:"conversationId,omitempty"`
+	AuthorID         string    `json:"authorId"`
+	AuthorScreenName string    `json:"authorScreenName"`
+	AuthorName       string    `json:"authorName"`
+	Text             string    `json:"text"`
+	CreatedAt        time.Time `json:"createdAt"`
+	IsRetweet        bool      `json:"isRetweet"`
+	IsQuote          bool      `json:"isQuote"`
+	IsReply          bool      `json:"isReply"`
+	InReplyToID      string    `json:"inReplyToId,omitempty"`
+	QuotedTweetID    string    `json:"quotedTweetId,omitempty"`
+	tweetEngagementCounts
+}
+
+func projectTweet(tw *x.Tweet, view string) (any, error) {
+	switch view {
+	case "", "full":
+		return tw, nil
+	case "metrics":
+		return tweetMetricsView{
+			ID:                    tw.ID,
+			AuthorScreenName:      tw.AuthorScreenName,
+			CreatedAt:             tw.CreatedAt,
+			tweetEngagementCounts: engagementCounts(tw),
+		}, nil
+	case "compact":
+		return tweetCompactView{
+			ID:                    tw.ID,
+			ConversationID:        tw.ConversationID,
+			AuthorID:              tw.AuthorID,
+			AuthorScreenName:      tw.AuthorScreenName,
+			AuthorName:            tw.AuthorName,
+			Text:                  tw.Text,
+			CreatedAt:             tw.CreatedAt,
+			IsRetweet:             tw.IsRetweet,
+			IsQuote:               tw.IsQuote,
+			IsReply:               tw.IsReply,
+			InReplyToID:           tw.InReplyToID,
+			QuotedTweetID:         tw.QuotedTweetID,
+			tweetEngagementCounts: engagementCounts(tw),
+		}, nil
+	default:
+		return nil, fmt.Errorf("%w: view must be one of full, compact, metrics", x.ErrInvalidParams)
+	}
+}
+
+func engagementCounts(tw *x.Tweet) tweetEngagementCounts {
+	return tweetEngagementCounts{
+		LikeCount:     tw.LikeCount,
+		RetweetCount:  tw.RetweetCount,
+		ReplyCount:    tw.ReplyCount,
+		QuoteCount:    tw.QuoteCount,
+		BookmarkCount: tw.BookmarkCount,
+		ViewCount:     tw.ViewCount,
+	}
 }
 
 // GetTweetDetailInput is the typed input for x_get_tweet_detail.
