@@ -17,4 +17,7 @@ var (
 	ErrAlreadyRetweeted = errors.New("x: tweet already retweeted")
 	ErrTweetTooLong     = errors.New("x: tweet text exceeds 280 characters")
 	ErrDMClosed         = errors.New("x: recipient has DMs closed")
+
+	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
+	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
 )
