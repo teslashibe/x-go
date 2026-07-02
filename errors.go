@@ -20,4 +20,7 @@ var (
 
 	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
 	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
+
+	ErrMediaProcessingFailed = errors.New("x: media processing failed")
+	ErrMediaProcessingTimeout = errors.New("x: media processing did not complete in time")
 )

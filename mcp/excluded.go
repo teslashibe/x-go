@@ -22,6 +22,7 @@ var Excluded = map[string]string{
 	// UploadMedia is the general entry point wrapped by x_upload_media;
 	// UploadMediaFromURL is a convenience wrapper it dispatches to.
 	"UploadMediaFromURL": "convenience wrapper around UploadMedia; the x_upload_media tool accepts image_url and calls this internally",
+	"UploadVideoFromURL": "convenience wrapper around UploadVideo; the x_upload_video tool accepts video_url and calls this internally",
 
 	// Convenience wrappers around the *Page variants — the MCP tool wraps
 	// the cursor-aware *Page method so a single tool covers both first-page
