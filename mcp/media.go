@@ -52,11 +52,43 @@ func uploadMedia(ctx context.Context, c *x.Client, in UploadMediaInput) (any, er
 	return map[string]any{"ok": true, "media_id": mediaID}, nil
 }
 
+// UploadVideoInput is the typed input for x_upload_video. The video is fetched
+// from video_url and streamed into X's chunked upload.
+type UploadVideoInput struct {
+	VideoURL string `json:"video_url" jsonschema:"description=URL of the video to fetch and upload (mp4/quicktime)"`
+	MimeType string `json:"mime_type,omitempty" jsonschema:"description=optional MIME type override (e.g. video/mp4) when the source omits it"`
+	AltText  string `json:"alt_text,omitempty" jsonschema:"description=optional accessibility alt text for the media"`
+}
+
+func uploadVideo(ctx context.Context, c *x.Client, in UploadVideoInput) (any, error) {
+	if in.VideoURL == "" {
+		return nil, fmt.Errorf("provide video_url")
+	}
+	var opts []x.MediaOption
+	if in.AltText != "" {
+		opts = append(opts, x.WithAltText(in.AltText))
+	}
+	mediaID, err := c.UploadVideoFromURL(ctx, in.VideoURL, in.MimeType, opts...)
+	if err != nil {
+		if mediaID == "" {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "media_id": mediaID, "warning": err.Error()}, nil
+	}
+	return map[string]any{"ok": true, "media_id": mediaID}, nil
+}
+
 var mediaTools = []mcptool.Tool{
 	mcptool.Define[*x.Client, UploadMediaInput](
 		"x_upload_media",
 		"Upload an image (URL or base64) to X and return its media_id for attaching to posts",
 		"UploadMedia",
 		uploadMedia,
+	),
+	mcptool.Define[*x.Client, UploadVideoInput](
+		"x_upload_video",
+		"Upload a video (mp4/quicktime) from a URL to X and return its media_id",
+		"UploadVideo",
+		uploadVideo,
 	),
 }

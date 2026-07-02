@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -51,6 +52,8 @@ func maxUploadBytesForType(mimeType string) int {
 // mediaOptions configures a media upload.
 type mediaOptions struct {
 	altText string
+	// maxVideoBytes optionally lowers the video size ceiling (see WithMaxVideoBytes).
+	maxVideoBytes int64
 }
 
 // MediaOption configures UploadMedia / UploadMediaFromURL.
@@ -231,6 +234,49 @@ func (c *Client) uploadPOST(ctx context.Context, path, contentType string, body 
 		return nil, fmt.Errorf("%w: building upload request: %v", ErrRequestFailed, err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+	}
+	defer resp.Body.Close()
+
+	// Chunked APPEND replies with 204 No Content on success; accept it
+	// without routing an empty body through checkStatus (which treats
+	// non-200 as an error).
+	if resp.StatusCode == http.StatusNoContent {
+		c.updateRateLimit(resp)
+		return nil, nil
+	}
+
+	if err := c.checkStatus(resp); err != nil {
+		return nil, err
+	}
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading upload body: %v", ErrRequestFailed, err)
+	}
+	return respBody, nil
+}
+
+// uploadGET performs an authenticated GET to the media upload host (used for
+// the chunked-upload STATUS command) and returns the raw response body.
+func (c *Client) uploadGET(ctx context.Context, path string, query url.Values) (json.RawMessage, error) {
+	c.waitForGap(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	u := uploadBase + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: building upload request: %v", ErrRequestFailed, err)
+	}
 	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
