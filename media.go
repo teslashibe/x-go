@@ -18,8 +18,15 @@ const (
 	// tokens, which this cookie-based client does not have.
 	uploadBase = "https://upload.twitter.com"
 
-	// maxImageUploadBytes bounds image uploads (X's image limit is 5 MiB).
+	// maxImageUploadBytes bounds static image uploads (X's image limit is 5 MiB).
 	maxImageUploadBytes = 5 << 20
+
+	// maxGifUploadBytes bounds animated GIF uploads (X allows up to 15 MiB).
+	maxGifUploadBytes = 15 << 20
+
+	// maxMediaFetchBytes is the ceiling for a UploadMediaFromURL source fetch;
+	// per-type limits are enforced after the type is known.
+	maxMediaFetchBytes = maxGifUploadBytes
 
 	// mediaFetchTimeout bounds a UploadMediaFromURL source fetch.
 	mediaFetchTimeout = 30 * time.Second
@@ -31,6 +38,14 @@ var supportedImageTypes = map[string]string{
 	"image/jpeg": "tweet_image",
 	"image/webp": "tweet_image",
 	"image/gif":  "tweet_gif",
+}
+
+// maxUploadBytesForType returns the X size limit for a supported media type.
+func maxUploadBytesForType(mimeType string) int {
+	if mimeType == "image/gif" {
+		return maxGifUploadBytes
+	}
+	return maxImageUploadBytes
 }
 
 // mediaOptions configures a media upload.
@@ -81,8 +96,8 @@ func (c *Client) UploadMedia(ctx context.Context, data []byte, mimeType string, 
 	if !ok {
 		return "", fmt.Errorf("%w: %q (supported: png, jpeg, webp, gif)", ErrUnsupportedMediaType, mimeType)
 	}
-	if len(data) > maxImageUploadBytes {
-		return "", fmt.Errorf("%w: %d bytes (max %d)", ErrMediaTooLarge, len(data), maxImageUploadBytes)
+	if limit := maxUploadBytesForType(mimeType); len(data) > limit {
+		return "", fmt.Errorf("%w: %d bytes (max %d)", ErrMediaTooLarge, len(data), limit)
 	}
 
 	o := applyMediaOpts(opts)
@@ -131,13 +146,14 @@ func (c *Client) UploadMediaFromURL(ctx context.Context, mediaURL string, opts .
 		return "", fmt.Errorf("%w: fetching media URL: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	}
 
-	// Read one extra byte so we can detect an over-limit body.
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageUploadBytes+1))
+	// Read one extra byte so we can detect an over-limit body. The per-type
+	// cap (image vs GIF) is enforced by UploadMedia once the type is known.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxMediaFetchBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("%w: reading media body: %v", ErrRequestFailed, err)
 	}
-	if len(data) > maxImageUploadBytes {
-		return "", fmt.Errorf("%w: source exceeds max %d bytes", ErrMediaTooLarge, maxImageUploadBytes)
+	if len(data) > maxMediaFetchBytes {
+		return "", fmt.Errorf("%w: source exceeds max %d bytes", ErrMediaTooLarge, maxMediaFetchBytes)
 	}
 
 	mimeType := normalizeMediaType(resp.Header.Get("Content-Type"))

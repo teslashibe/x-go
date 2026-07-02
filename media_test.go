@@ -121,6 +121,27 @@ func TestUploadMediaWithAltText(t *testing.T) {
 	}
 }
 
+func TestUploadMediaPerTypeSizeLimits(t *testing.T) {
+	c := newTestClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"media_id_string":"1"}`), nil
+	}))
+
+	// A 6 MiB PNG exceeds the 5 MiB image cap.
+	png := make([]byte, 6<<20)
+	if _, err := c.UploadMedia(context.Background(), png, "image/png"); !errors.Is(err, ErrMediaTooLarge) {
+		t.Fatalf("6MiB png: err = %v, want ErrMediaTooLarge", err)
+	}
+	// The same 6 MiB payload as a GIF is within the 15 MiB GIF cap.
+	if _, err := c.UploadMedia(context.Background(), png, "image/gif"); err != nil {
+		t.Fatalf("6MiB gif: unexpected err %v", err)
+	}
+	// A 16 MiB GIF exceeds the GIF cap.
+	bigGif := make([]byte, 16<<20)
+	if _, err := c.UploadMedia(context.Background(), bigGif, "image/gif"); !errors.Is(err, ErrMediaTooLarge) {
+		t.Fatalf("16MiB gif: err = %v, want ErrMediaTooLarge", err)
+	}
+}
+
 func TestUploadMediaUnsupportedType(t *testing.T) {
 	c := newTestClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Fatal("no request should be made for unsupported type")
