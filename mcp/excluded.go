@@ -19,6 +19,10 @@ var Excluded = map[string]string{
 	"TransactionInitErr": "internal observability of client bootstrap state; reported at construction, not as a callable tool",
 	"RefreshQueryIDs":    "internal session-bootstrap helper; managed by the client lifecycle, not exposed as an agent-callable tool",
 
+	// UploadMedia is the general entry point wrapped by x_upload_media;
+	// UploadMediaFromURL is a convenience wrapper it dispatches to.
+	"UploadMediaFromURL": "convenience wrapper around UploadMedia; the x_upload_media tool accepts image_url and calls this internally",
+
 	// Convenience wrappers around the *Page variants — the MCP tool wraps
 	// the cursor-aware *Page method so a single tool covers both first-page
 	// and pagination use cases.

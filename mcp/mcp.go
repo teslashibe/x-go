@@ -43,6 +43,7 @@ func (Provider) Tools() []mcptool.Tool {
 			len(timelineTools)+
 			len(searchTools)+
 			len(composeTools)+
+			len(mediaTools)+
 			len(actionTools)+
 			len(socialTools)+
 			len(dmTools)+
@@ -54,6 +55,7 @@ func (Provider) Tools() []mcptool.Tool {
 	out = append(out, timelineTools...)
 	out = append(out, searchTools...)
 	out = append(out, composeTools...)
+	out = append(out, mediaTools...)
 	out = append(out, actionTools...)
 	out = append(out, socialTools...)
 	out = append(out, dmTools...)
