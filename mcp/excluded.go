@@ -18,6 +18,7 @@ var Excluded = map[string]string{
 	"RateLimit":          "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
 	"TransactionInitErr": "internal observability of client bootstrap state; reported at construction, not as a callable tool",
 	"RefreshQueryIDs":    "internal session-bootstrap helper; managed by the client lifecycle, not exposed as an agent-callable tool",
+	"MaxTweetLength":     "account-tier helper used by compose validation; agents learn the limit from tool schema / compose errors, not a separate tool",
 
 	// UploadMedia is the general entry point wrapped by x_upload_media;
 	// UploadMediaFromURL is a convenience wrapper it dispatches to.

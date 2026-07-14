@@ -37,21 +37,31 @@ func (c *Client) SendDM(ctx context.Context, conversationID, text string) (*Mess
 // SendNewDM sends a direct message to a user by their ID, creating a new
 // conversation if one doesn't exist. Returns ErrDMClosed if the recipient
 // has DMs disabled.
+//
+// Payload matches X web / twikit: conversation_id is "<recipient>-<self>" and
+// recipient_ids is false (the peer is implied by conversation_id). Passing the
+// raw recipient id string as recipient_ids makes new2 return HTTP 400.
 func (c *Client) SendNewDM(ctx context.Context, recipientID, text string) (*Message, error) {
 	if recipientID == "" || text == "" {
 		return nil, ErrInvalidParams
 	}
+	selfID := strings.TrimSpace(c.restID)
+	if selfID == "" && c.viewer != nil {
+		selfID = strings.TrimSpace(c.viewer.ID)
+	}
+	if selfID == "" {
+		return nil, fmt.Errorf("%w: authenticated user id unavailable for DM", ErrInvalidParams)
+	}
 
+	convID := recipientID + "-" + selfID
 	payload := map[string]interface{}{
-		"conversation_id":                 recipientID + "-" + c.restID,
-		"recipient_ids":                   recipientID,
-		"request_id":                      fmt.Sprintf("%d", time.Now().UnixNano()),
-		"text":                            text,
-		"cards_platform":                  "Web-12",
-		"include_cards":                   1,
-		"include_quote_count":             true,
-		"dm_secret_conversations_enabled": false,
-		"dm_users":                        false,
+		"conversation_id":     convID,
+		"recipient_ids":       false,
+		"text":                text,
+		"cards_platform":      "Web-12",
+		"include_cards":       1,
+		"include_quote_count": true,
+		"dm_users":            false,
 	}
 
 	data, err := c.restPOST(ctx, "/i/api/1.1/dm/new2.json", payload)
@@ -59,8 +69,7 @@ func (c *Client) SendNewDM(ctx context.Context, recipientID, text string) (*Mess
 		return nil, err
 	}
 
-	convID := buildConversationID(c.restID, recipientID)
-	return parseSentMessage(data, convID)
+	return parseSentMessage(data, buildConversationID(selfID, recipientID))
 }
 
 // buildConversationID creates the canonical conversation ID for a 1:1 DM.
