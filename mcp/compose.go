@@ -9,7 +9,7 @@ import (
 
 // CreateTweetInput is the typed input for x_create_tweet.
 type CreateTweetInput struct {
-	Text              string   `json:"text" jsonschema:"description=tweet body (≤280 chars),required"`
+	Text              string   `json:"text" jsonschema:"description=tweet body (≤280 free / ≤25000 Premium, auto-detected),required"`
 	MediaIDs          []string `json:"media_ids,omitempty" jsonschema:"description=optional list of pre-uploaded media IDs to attach"`
 	PossiblySensitive bool     `json:"possibly_sensitive,omitempty" jsonschema:"description=mark attached media as possibly sensitive"`
 }
@@ -36,7 +36,7 @@ func createTweet(ctx context.Context, c *x.Client, in CreateTweetInput) (any, er
 // ReplyInput is the typed input for x_reply.
 type ReplyInput struct {
 	InReplyToID       string   `json:"in_reply_to_id" jsonschema:"description=tweet ID being replied to,required"`
-	Text              string   `json:"text" jsonschema:"description=reply body (≤280 chars),required"`
+	Text              string   `json:"text" jsonschema:"description=reply body (≤280 free / ≤25000 Premium, auto-detected),required"`
 	MediaIDs          []string `json:"media_ids,omitempty" jsonschema:"description=optional list of pre-uploaded media IDs to attach"`
 	PossiblySensitive bool     `json:"possibly_sensitive,omitempty" jsonschema:"description=mark attached media as possibly sensitive"`
 }
@@ -52,7 +52,7 @@ func reply(ctx context.Context, c *x.Client, in ReplyInput) (any, error) {
 // QuoteTweetInput is the typed input for x_quote_tweet.
 type QuoteTweetInput struct {
 	QuotedTweetURL    string   `json:"quoted_tweet_url" jsonschema:"description=full URL of the tweet being quoted (https://x.com/<user>/status/<id>),required"`
-	Text              string   `json:"text" jsonschema:"description=quote tweet body (≤280 chars),required"`
+	Text              string   `json:"text" jsonschema:"description=quote tweet body (≤280 free / ≤25000 Premium, auto-detected),required"`
 	MediaIDs          []string `json:"media_ids,omitempty" jsonschema:"description=optional list of pre-uploaded media IDs to attach"`
 	PossiblySensitive bool     `json:"possibly_sensitive,omitempty" jsonschema:"description=mark attached media as possibly sensitive"`
 }
@@ -80,7 +80,7 @@ func deleteTweet(ctx context.Context, c *x.Client, in DeleteTweetInput) (any, er
 var composeTools = []mcptool.Tool{
 	mcptool.Define[*x.Client, CreateTweetInput](
 		"x_create_tweet",
-		"Publish a new tweet (≤280 chars; optional media attachments)",
+		"Publish a new tweet (limit from account tier; optional media)",
 		"CreateTweet",
 		createTweet,
 	),

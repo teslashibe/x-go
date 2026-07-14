@@ -443,8 +443,13 @@ func (c *Client) checkStatus(resp *http.Response) error {
 		return nil
 	}
 
-	// Drain body to allow keep-alive reuse.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBody))
+	// Read a bounded body snippet so 4xx/5xx surfaces X's reason instead of
+	// a bare status code (DM new2 often returns useful JSON on 400).
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	snippet := truncate(strings.TrimSpace(string(body)), 400)
+	if err := classifyRESTErrorBody(body); err != nil {
+		return err
+	}
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
@@ -472,9 +477,54 @@ func (c *Client) checkStatus(resp *http.Response) error {
 		c.gapMu.Unlock()
 		return &RateLimitError{Wait: wait}
 	case resp.StatusCode >= 500:
+		if snippet != "" {
+			return fmt.Errorf("%w: HTTP %d: %s", ErrRequestFailed, resp.StatusCode, snippet)
+		}
 		return fmt.Errorf("%w: HTTP %d", ErrRequestFailed, resp.StatusCode)
 	default:
+		if snippet != "" {
+			return fmt.Errorf("%w: unexpected HTTP %d: %s", ErrRequestFailed, resp.StatusCode, snippet)
+		}
 		return fmt.Errorf("%w: unexpected HTTP %d", ErrRequestFailed, resp.StatusCode)
+	}
+}
+
+// classifyRESTErrorBody maps known X REST error payloads to sentinels so
+// callers (outbox, MCP) can show actionable failures instead of bare HTTP 400.
+func classifyRESTErrorBody(body []byte) error {
+	if len(body) == 0 {
+		return nil
+	}
+	var envelope struct {
+		Errors []struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if json.Unmarshal(body, &envelope) != nil || len(envelope.Errors) == 0 {
+		lower := strings.ToLower(string(body))
+		switch {
+		case strings.Contains(lower, "send a direct message"),
+			strings.Contains(lower, "cannot send"), strings.Contains(lower, "not allowed to send"):
+			return ErrDMClosed
+		default:
+			return nil
+		}
+	}
+	first := envelope.Errors[0]
+	msg := strings.ToLower(first.Message)
+	switch {
+	case first.Code == 32 || strings.Contains(msg, "not authenticated"):
+		return ErrUnauthorized
+	case first.Code == 88 || strings.Contains(msg, "rate limit"):
+		return ErrRateLimited
+	case first.Code == 349 || strings.Contains(msg, "send a direct message"),
+		strings.Contains(msg, "cannot send"), strings.Contains(msg, "not allowed to send"):
+		return ErrDMClosed
+	case first.Code == 34 || strings.Contains(msg, "not found"):
+		return ErrNotFound
+	default:
+		return nil
 	}
 }
 
