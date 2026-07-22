@@ -21,7 +21,7 @@ func (c *Client) validateSession(ctx context.Context) error {
 
 	raw, err := c.graphqlGET(ctx, "Viewer", vars)
 	if err != nil {
-		return fmt.Errorf("%w: session validation failed: %v", ErrUnauthorized, err)
+		return fmt.Errorf("%w: session validation failed: %w", ErrUnauthorized, err)
 	}
 
 	var data struct {
