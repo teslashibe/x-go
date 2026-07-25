@@ -9,7 +9,7 @@ import (
 
 // SearchTweetsInput is the typed input for x_search_tweets.
 type SearchTweetsInput struct {
-	Query      string `json:"query" jsonschema:"description=raw X search query (supports operators like from:user since:YYYY-MM-DD),required"`
+	Query      string `json:"query" jsonschema:"description=raw X search query; final query including appended since/until must be at most 512 characters (supports operators like from:user since:YYYY-MM-DD),required"`
 	Count      int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor     string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
 	View       string `json:"view,omitempty" jsonschema:"description=response view; allowed: full,compact,metrics,default=full"`
@@ -42,7 +42,7 @@ func searchTweets(ctx context.Context, c *x.Client, in SearchTweetsInput) (any, 
 
 // SearchUsersInput is the typed input for x_search_users.
 type SearchUsersInput struct {
-	Query  string `json:"query" jsonschema:"description=keywords or handle to match users on,required"`
+	Query  string `json:"query" jsonschema:"description=keywords or handle to match users on; must be at most 512 characters,required"`
 	Count  int    `json:"count,omitempty" jsonschema:"description=results per page,minimum=1,maximum=200,default=20"`
 	Cursor string `json:"cursor,omitempty" jsonschema:"description=opaque pagination cursor returned by a previous call (next_cursor)"`
 }
@@ -61,7 +61,8 @@ func searchUsers(ctx context.Context, c *x.Client, in SearchUsersInput) (any, er
 
 // AdvancedSearchTweetsInput is the typed input for x_advanced_search_tweets.
 // Mirrors the fields of x.AdvancedSearch and exposes them as a flat schema
-// so an agent can build a query without learning X's operator syntax.
+// so an agent can build a query without learning X's operator syntax. The
+// compiled query, including all fields and dates, must be at most 512 characters.
 type AdvancedSearchTweetsInput struct {
 	AllWords    string   `json:"all_words,omitempty" jsonschema:"description=all of these words (space-separated, ANDed)"`
 	ExactPhrase string   `json:"exact_phrase,omitempty" jsonschema:"description=this exact phrase (quoted in the resulting query)"`
