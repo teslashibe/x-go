@@ -4,7 +4,35 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
+
+// MaxSearchQueryLength is X's effective SearchTimeline raw-query limit.
+const MaxSearchQueryLength = 512
+
+// SearchQueryTooLongError reports an oversized final query before any request
+// reaches SearchTimeline. Length and Limit count Unicode characters, not bytes.
+type SearchQueryTooLongError struct {
+	Length int
+	Limit  int
+}
+
+func (e *SearchQueryTooLongError) Error() string {
+	return fmt.Sprintf("x: effective search query is %d characters; maximum is %d; shorten the query or remove filters", e.Length, e.Limit)
+}
+
+// Unwrap classifies an oversized query as invalid parameters.
+func (e *SearchQueryTooLongError) Unwrap() error {
+	return ErrInvalidParams
+}
+
+// ValidateSearchQuery checks the fully constructed SearchTimeline raw query.
+func ValidateSearchQuery(query string) error {
+	if n := utf8.RuneCountInString(query); n > MaxSearchQueryLength {
+		return &SearchQueryTooLongError{Length: n, Limit: MaxSearchQueryLength}
+	}
+	return nil
+}
 
 // SearchOption configures SearchTweets and SearchUsers.
 type SearchOption func(*searchOptions)
@@ -34,18 +62,18 @@ func WithSearchUntil(date string) SearchOption {
 type ReplyFilter string
 
 const (
-	ReplyFilterInclude  ReplyFilter = ""              // include replies and original posts (default)
-	ReplyFilterExclude  ReplyFilter = "exclude:replies" // only original posts
-	ReplyFilterOnly     ReplyFilter = "filter:replies"  // only replies
+	ReplyFilterInclude ReplyFilter = ""                // include replies and original posts (default)
+	ReplyFilterExclude ReplyFilter = "exclude:replies" // only original posts
+	ReplyFilterOnly    ReplyFilter = "filter:replies"  // only replies
 )
 
 // LinkFilter controls which link types are included in search results.
 type LinkFilter string
 
 const (
-	LinkFilterInclude LinkFilter = ""             // include all posts (default)
+	LinkFilterInclude LinkFilter = ""              // include all posts (default)
 	LinkFilterExclude LinkFilter = "exclude:links" // exclude posts with links
-	LinkFilterOnly    LinkFilter = "filter:links"   // only posts with links
+	LinkFilterOnly    LinkFilter = "filter:links"  // only posts with links
 )
 
 // AdvancedSearch mirrors X's Advanced Search UI. All fields are optional.
@@ -63,8 +91,8 @@ type AdvancedSearch struct {
 	Language string // BCP-47 lang code: en, es, ja, etc.
 
 	// Accounts
-	From      []string // from these accounts (without @)
-	To        []string // sent in reply to these accounts
+	From       []string // from these accounts (without @)
+	To         []string // sent in reply to these accounts
 	Mentioning []string // mentioning these accounts
 
 	// Filters
@@ -72,9 +100,9 @@ type AdvancedSearch struct {
 	Links   LinkFilter
 
 	// Engagement minimums
-	MinReplies  int
-	MinLikes    int
-	MinReposts  int
+	MinReplies int
+	MinLikes   int
+	MinReposts int
 
 	// Dates (YYYY-MM-DD)
 	Since string
@@ -164,6 +192,9 @@ func (c *Client) AdvancedSearchTweetsPage(ctx context.Context, search *AdvancedS
 	if q == "" {
 		return TweetPage{}, fmt.Errorf("%w: search query is empty — set at least one field", ErrInvalidParams)
 	}
+	if err := ValidateSearchQuery(q); err != nil {
+		return TweetPage{}, err
+	}
 	if count <= 0 {
 		count = 20
 	}
@@ -198,6 +229,7 @@ func (c *Client) SearchTweets(ctx context.Context, query string, count int, opts
 
 // SearchTweetsPage returns a page of tweet search results starting from cursor.
 func (c *Client) SearchTweetsPage(ctx context.Context, query string, count int, cursor string, opts ...SearchOption) (TweetPage, error) {
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return TweetPage{}, fmt.Errorf("%w: query must not be empty", ErrInvalidParams)
 	}
@@ -211,6 +243,9 @@ func (c *Client) SearchTweetsPage(ctx context.Context, query string, count int, 
 	}
 
 	q := buildSearchQuery(query, so)
+	if err := ValidateSearchQuery(q); err != nil {
+		return TweetPage{}, err
+	}
 
 	vars := map[string]interface{}{
 		"rawQuery":    q,
@@ -237,8 +272,12 @@ func (c *Client) SearchUsers(ctx context.Context, query string, count int) (User
 
 // SearchUsersPage returns a page of user search results starting from cursor.
 func (c *Client) SearchUsersPage(ctx context.Context, query string, count int, cursor string) (UserPage, error) {
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return UserPage{}, fmt.Errorf("%w: query must not be empty", ErrInvalidParams)
+	}
+	if err := ValidateSearchQuery(query); err != nil {
+		return UserPage{}, err
 	}
 	if count <= 0 {
 		count = 20
@@ -263,7 +302,7 @@ func (c *Client) SearchUsersPage(ctx context.Context, query string, count int, c
 }
 
 func buildSearchQuery(query string, so *searchOptions) string {
-	q := query
+	q := strings.TrimSpace(query)
 	if so.since != "" {
 		q += " since:" + so.since
 	}
