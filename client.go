@@ -553,6 +553,10 @@ func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
 		first := envelope.Errors[0]
 		msg := strings.ToLower(first.Message)
 		switch {
+		case strings.Contains(msg, "challenge") ||
+			strings.Contains(msg, "verification required") ||
+			strings.Contains(msg, "verify your identity"):
+			return nil, ErrChallenge
 		case first.Code == 32 || strings.Contains(msg, "not authenticated"):
 			return nil, ErrUnauthorized
 		case first.Code == 63 || strings.Contains(msg, "suspended"):

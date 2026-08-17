@@ -1,6 +1,9 @@
 package x
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 var (
 	ErrInvalidAuth   = errors.New("x: missing required cookie (auth_token or ct0)")
@@ -17,10 +20,45 @@ var (
 	ErrAlreadyRetweeted = errors.New("x: tweet already retweeted")
 	ErrTweetTooLong     = errors.New("x: tweet text exceeds account character limit")
 	ErrDMClosed         = errors.New("x: recipient has DMs closed")
+	ErrChallenge        = errors.New("x: additional verification required")
+	ErrDefinite         = errors.New("x: request definitely did not complete")
+	ErrAmbiguous        = errors.New("x: request outcome is ambiguous")
 
 	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
 	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
 
-	ErrMediaProcessingFailed = errors.New("x: media processing failed")
+	ErrMediaProcessingFailed  = errors.New("x: media processing failed")
 	ErrMediaProcessingTimeout = errors.New("x: media processing did not complete in time")
 )
+
+// OutcomeError classifies whether a failed write definitely did not complete
+// or may have completed before the transport failed.
+type OutcomeError struct {
+	Outcome error
+	Err     error
+}
+
+func (e *OutcomeError) Error() string { return e.Outcome.Error() + ": " + e.Err.Error() }
+func (e *OutcomeError) Unwrap() []error {
+	return []error{e.Outcome, e.Err}
+}
+
+func classifyWriteOutcome(err error) error {
+	if err == nil {
+		return nil
+	}
+	outcome := ErrAmbiguous
+	if errors.Is(err, ErrInvalidParams) ||
+		errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrForbidden) ||
+		errors.Is(err, ErrSuspended) ||
+		errors.Is(err, ErrRateLimited) ||
+		errors.Is(err, ErrChallenge) ||
+		errors.Is(err, ErrDMClosed) {
+		outcome = ErrDefinite
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		outcome = ErrAmbiguous
+	}
+	return &OutcomeError{Outcome: outcome, Err: err}
+}

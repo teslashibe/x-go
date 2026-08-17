@@ -42,7 +42,7 @@ type ReplyInput struct {
 }
 
 func reply(ctx context.Context, c *x.Client, in ReplyInput) (any, error) {
-	tw, err := c.Reply(ctx, in.InReplyToID, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
+	tw, err := c.ReplyToPost(ctx, in.InReplyToID, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
 	if err != nil {
 		return nil, err
 	}

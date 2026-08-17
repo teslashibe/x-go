@@ -66,10 +66,14 @@ func (c *Client) SendNewDM(ctx context.Context, recipientID, text string) (*Mess
 
 	data, err := c.restPOST(ctx, "/i/api/1.1/dm/new2.json", payload)
 	if err != nil {
-		return nil, err
+		return nil, classifyWriteOutcome(err)
 	}
 
-	return parseSentMessage(data, buildConversationID(selfID, recipientID))
+	message, err := parseSentMessage(data, buildConversationID(selfID, recipientID))
+	if err != nil {
+		return nil, classifyWriteOutcome(err)
+	}
+	return message, nil
 }
 
 // buildConversationID creates the canonical conversation ID for a 1:1 DM.
