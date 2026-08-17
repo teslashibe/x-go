@@ -5,10 +5,68 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
+
+// Session is the canonical cookie-authenticated X connection. AuthToken and
+// CT0 are required; the remaining fields preserve browser and proxy affinity.
+type Session struct {
+	AuthToken string `json:"auth_token"`
+	CT0       string `json:"ct0"`
+	Twid      string `json:"twid,omitempty"`
+	KDT       string `json:"kdt,omitempty"`
+	UserAgent string `json:"user_agent,omitempty"`
+	Proxy     string `json:"proxy,omitempty"`
+}
+
+// String prevents credentials and authenticated proxy URLs from leaking
+// through logs that format a Session value.
+func (Session) String() string { return "x.Session{credentials:redacted}" }
+
+// GoString prevents credentials from leaking through %#v formatting.
+func (Session) GoString() string { return "x.Session{credentials:redacted}" }
+
+// LogValue prevents structured slog records from reflecting exported secrets.
+func (Session) LogValue() slog.Value {
+	return slog.StringValue("x.Session{credentials:redacted}")
+}
+
+// Validate checks the session without exposing credential values.
+func (s Session) Validate() error {
+	if strings.TrimSpace(s.AuthToken) == "" || strings.TrimSpace(s.CT0) == "" {
+		return ErrInvalidAuth
+	}
+	if s.Proxy != "" {
+		u, err := url.Parse(s.Proxy)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("%w: invalid proxy URL", ErrInvalidParams)
+		}
+	}
+	return nil
+}
+
+// NewClient constructs and validates a client using this session.
+func (s Session) NewClient(ctx context.Context, opts ...Option) (*Client, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	if s.UserAgent != "" {
+		opts = append(opts, WithUserAgent(s.UserAgent))
+	}
+	if s.Proxy != "" {
+		opts = append(opts, WithProxy(s.Proxy))
+	}
+	return NewWithContext(ctx, Cookies{
+		AuthToken: s.AuthToken,
+		CT0:       s.CT0,
+		Twid:      s.Twid,
+		KDT:       s.KDT,
+	}, opts...)
+}
 
 // validateSession calls the Viewer query to verify auth, then fetches the
 // full profile via UserByRestId to populate all fields.
@@ -21,6 +79,9 @@ func (c *Client) validateSession(ctx context.Context) error {
 
 	raw, err := c.graphqlGET(ctx, "Viewer", vars)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: session validation failed: %w", ErrUnauthorized, err)
 	}
 

@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	baseURL          = "https://x.com"
-	graphqlBase      = "https://x.com/i/api/graphql"
-	bearerToken      = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-	defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-	defaultMinGap    = 1 * time.Second
+	baseURL           = "https://x.com"
+	graphqlBase       = "https://x.com/i/api/graphql"
+	bearerToken       = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+	defaultUserAgent  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+	defaultMinGap     = 1 * time.Second
 	defaultMaxRetries = 3
 	defaultRetryBase  = 500 * time.Millisecond
 )
@@ -35,7 +35,7 @@ var defaultQueryIDs = map[string]string{
 	"Following":                "j4s0ZOO_DvhECpS-2U-SUA",
 	"FollowersYouKnow":         "Iq5xmBUZ059hvTDUMkv1xA",
 	"ListBySlug":               "LDQpQ89B5ipR8izCKrWU0g",
-	"ListLatestTweetsTimeline":  "EX6I_XpJSz1eZ2H9WsR4tA",
+	"ListLatestTweetsTimeline": "EX6I_XpJSz1eZ2H9WsR4tA",
 	"ListMembers":              "_7ye8v2J1nJQ6gX-Q4Fjng",
 	"ListMemberships":          "asjMuAwNVSnmASqz-bJb8Q",
 	"Viewer":                   "_8ClT24oZ8tpylf_OSuNdg",
@@ -91,8 +91,8 @@ var defaultFeatures = map[string]bool{
 	"responsive_web_grok_share_attachment_enabled":                            true,
 	"responsive_web_grok_annotations_enabled":                                 true,
 	"responsive_web_jetfuel_frame":                                            true,
-	"content_disclosure_indicator_enabled":                                     true,
-	"content_disclosure_ai_generated_indicator_enabled":                        true,
+	"content_disclosure_indicator_enabled":                                    true,
+	"content_disclosure_ai_generated_indicator_enabled":                       true,
 }
 
 // Client is an X API client. It is safe for concurrent use.
@@ -111,9 +111,9 @@ type Client struct {
 	reqMu      sync.RWMutex // protects queryIDs
 	rlMu       sync.Mutex
 	rlState    RateLimitState
-	viewer      *User
-	txState     transactionState
-	txInitErr   error // non-nil if initTransaction failed; Followers/Search may 404
+	viewer     *User
+	txState    transactionState
+	txInitErr  error // non-nil if initTransaction failed; Followers/Search may 404
 }
 
 // Option configures a Client.
@@ -185,6 +185,12 @@ func WithMinRequestGap(d time.Duration) Option {
 // New creates a Client and validates the session via the Viewer query.
 // Returns ErrInvalidAuth if AuthToken or CT0 is empty.
 func New(cookies Cookies, opts ...Option) (*Client, error) {
+	return NewWithContext(context.Background(), cookies, opts...)
+}
+
+// NewWithContext creates a Client and bounds session validation and
+// transaction bootstrap with ctx.
+func NewWithContext(ctx context.Context, cookies Cookies, opts ...Option) (*Client, error) {
 	if cookies.AuthToken == "" || cookies.CT0 == "" {
 		return nil, fmt.Errorf("%w: AuthToken and CT0 must both be non-empty", ErrInvalidAuth)
 	}
@@ -217,11 +223,14 @@ func New(cookies Cookies, opts ...Option) (*Client, error) {
 		o(c)
 	}
 
-	if err := c.validateSession(context.Background()); err != nil {
+	if err := c.validateSession(ctx); err != nil {
 		return nil, err
 	}
 
-	c.txInitErr = c.initTransaction(context.Background())
+	c.txInitErr = c.initTransaction(ctx)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	return c, nil
 }

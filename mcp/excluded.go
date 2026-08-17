@@ -34,6 +34,7 @@ var Excluded = map[string]string{
 	"SearchTweets":         "convenience wrapper around SearchTweetsPage; the x_search_tweets tool wraps the cursor-aware variant",
 	"SearchUsers":          "convenience wrapper around SearchUsersPage; the x_search_users tool wraps the cursor-aware variant",
 	"AdvancedSearchTweets": "convenience wrapper around AdvancedSearchTweetsPage; the x_advanced_search_tweets tool wraps the cursor-aware variant",
+	"ReplyToPost":          "typed-outcome wrapper used by the existing reply MCP tool",
 	"GetFollowers":         "convenience wrapper around GetFollowersPage; the x_get_followers tool wraps the cursor-aware variant",
 	"GetFollowing":         "convenience wrapper around GetFollowingPage; the x_get_following tool wraps the cursor-aware variant",
 	"GetListTimeline":      "convenience wrapper around GetListTimelinePage; the x_get_list_timeline tool wraps the cursor-aware variant",
