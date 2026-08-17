@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -20,6 +21,18 @@ type Session struct {
 	KDT       string `json:"kdt,omitempty"`
 	UserAgent string `json:"user_agent,omitempty"`
 	Proxy     string `json:"proxy,omitempty"`
+}
+
+// String prevents credentials and authenticated proxy URLs from leaking
+// through logs that format a Session value.
+func (Session) String() string { return "x.Session{credentials:redacted}" }
+
+// GoString prevents credentials from leaking through %#v formatting.
+func (Session) GoString() string { return "x.Session{credentials:redacted}" }
+
+// LogValue prevents structured slog records from reflecting exported secrets.
+func (Session) LogValue() slog.Value {
+	return slog.StringValue("x.Session{credentials:redacted}")
 }
 
 // Validate checks the session without exposing credential values.
@@ -66,6 +79,9 @@ func (c *Client) validateSession(ctx context.Context) error {
 
 	raw, err := c.graphqlGET(ctx, "Viewer", vars)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("%w: session validation failed: %w", ErrUnauthorized, err)
 	}
 

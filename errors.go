@@ -1,7 +1,6 @@
 package x
 
 import (
-	"context"
 	"errors"
 )
 
@@ -17,12 +16,13 @@ var (
 	ErrPartialResult = errors.New("x: context cancelled; partial result returned")
 	ErrRequestFailed = errors.New("x: HTTP request failed")
 
-	ErrAlreadyRetweeted = errors.New("x: tweet already retweeted")
-	ErrTweetTooLong     = errors.New("x: tweet text exceeds account character limit")
-	ErrDMClosed         = errors.New("x: recipient has DMs closed")
-	ErrChallenge        = errors.New("x: additional verification required")
-	ErrDefinite         = errors.New("x: request definitely did not complete")
-	ErrAmbiguous        = errors.New("x: request outcome is ambiguous")
+	ErrAlreadyRetweeted  = errors.New("x: tweet already retweeted")
+	ErrTweetTooLong      = errors.New("x: tweet text exceeds account character limit")
+	ErrDMClosed          = errors.New("x: recipient has DMs closed")
+	ErrChallenge         = errors.New("x: additional verification required")
+	ErrDefinite          = errors.New("x: request definitely did not complete")
+	ErrAmbiguous         = errors.New("x: request outcome is ambiguous")
+	errWriteNotAttempted = errors.New("x: write was not attempted")
 
 	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
 	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
@@ -51,14 +51,15 @@ func classifyWriteOutcome(err error) error {
 	if errors.Is(err, ErrInvalidParams) ||
 		errors.Is(err, ErrUnauthorized) ||
 		errors.Is(err, ErrForbidden) ||
+		errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrSuspended) ||
 		errors.Is(err, ErrRateLimited) ||
 		errors.Is(err, ErrChallenge) ||
-		errors.Is(err, ErrDMClosed) {
+		errors.Is(err, ErrDMClosed) ||
+		errors.Is(err, ErrTweetTooLong) ||
+		errors.Is(err, ErrQueryIDStale) ||
+		errors.Is(err, errWriteNotAttempted) {
 		outcome = ErrDefinite
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		outcome = ErrAmbiguous
 	}
 	return &OutcomeError{Outcome: outcome, Err: err}
 }

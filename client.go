@@ -65,38 +65,17 @@ func (c *Client) graphqlGET(ctx context.Context, operationName string, variables
 
 // graphqlPOST executes an authenticated GraphQL POST request with retries.
 func (c *Client) graphqlPOST(ctx context.Context, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(errWriteNotAttempted, err)
+	}
 	qid := c.queryID(operationName)
 	if qid == "" {
 		return nil, fmt.Errorf("%w: no queryId registered for %q", ErrInvalidParams, operationName)
 	}
 
-	attempts := c.maxRetries
-	if attempts < 1 {
-		attempts = 1
-	}
-
-	var lastErr error
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			wait := retryWait(lastErr, c.retryBase, i)
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(wait):
-			}
-		}
-
-		data, err := c.doGraphQLPOST(ctx, qid, operationName, variables)
-		if err == nil {
-			return data, nil
-		}
-
-		if isNonRetriable(err) {
-			return nil, err
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	// Writes are never retried: after a transport failure the server outcome is
+	// unknown, and retrying could publish duplicate content.
+	return c.doGraphQLPOST(ctx, qid, operationName, variables)
 }
 
 // retryWait returns the duration to sleep before the next retry. If the
@@ -150,7 +129,7 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
 	c.waitForGap(ctx)
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, errors.Join(errWriteNotAttempted, ctx.Err())
 	}
 
 	endpoint := fmt.Sprintf("%s/%s/%s", graphqlBase, qid, operationName)
@@ -230,7 +209,7 @@ func (c *Client) restGET(ctx context.Context, path string, params url.Values) (j
 func (c *Client) restPOST(ctx context.Context, path string, payload interface{}) (json.RawMessage, error) {
 	c.waitForGap(ctx)
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, errors.Join(errWriteNotAttempted, ctx.Err())
 	}
 
 	bodyBytes, err := json.Marshal(payload)

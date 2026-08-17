@@ -13,7 +13,7 @@ import (
 // SendDM sends a direct message in an existing conversation.
 func (c *Client) SendDM(ctx context.Context, conversationID, text string) (*Message, error) {
 	if conversationID == "" || text == "" {
-		return nil, ErrInvalidParams
+		return nil, classifyWriteOutcome(ErrInvalidParams)
 	}
 
 	payload := map[string]interface{}{
@@ -29,9 +29,13 @@ func (c *Client) SendDM(ctx context.Context, conversationID, text string) (*Mess
 
 	data, err := c.restPOST(ctx, "/i/api/1.1/dm/new2.json", payload)
 	if err != nil {
-		return nil, err
+		return nil, classifyWriteOutcome(err)
 	}
-	return parseSentMessage(data, conversationID)
+	message, err := parseSentMessage(data, conversationID)
+	if err != nil {
+		return nil, classifyWriteOutcome(err)
+	}
+	return message, nil
 }
 
 // SendNewDM sends a direct message to a user by their ID, creating a new
@@ -43,14 +47,14 @@ func (c *Client) SendDM(ctx context.Context, conversationID, text string) (*Mess
 // raw recipient id string as recipient_ids makes new2 return HTTP 400.
 func (c *Client) SendNewDM(ctx context.Context, recipientID, text string) (*Message, error) {
 	if recipientID == "" || text == "" {
-		return nil, ErrInvalidParams
+		return nil, classifyWriteOutcome(ErrInvalidParams)
 	}
 	selfID := strings.TrimSpace(c.restID)
 	if selfID == "" && c.viewer != nil {
 		selfID = strings.TrimSpace(c.viewer.ID)
 	}
 	if selfID == "" {
-		return nil, fmt.Errorf("%w: authenticated user id unavailable for DM", ErrInvalidParams)
+		return nil, classifyWriteOutcome(fmt.Errorf("%w: authenticated user id unavailable for DM", ErrInvalidParams))
 	}
 
 	convID := recipientID + "-" + selfID
