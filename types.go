@@ -1,6 +1,18 @@
 package x
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+// RawTweetEnvelope is the versioned, lossless provider result used to build a
+// Tweet. Result is the complete tweet_results.result object, including fields
+// unknown to this version of x-go.
+type RawTweetEnvelope struct {
+	SchemaVersion int             `json:"schemaVersion"`
+	Provider      string          `json:"provider"`
+	Result        json.RawMessage `json:"result"`
+}
 
 // Cookies holds the X session cookies obtained from a browser export.
 // AuthToken and CT0 are required; Twid is used to derive the authenticated
@@ -34,29 +46,30 @@ type User struct {
 
 // Tweet represents a single X post.
 type Tweet struct {
-	ID               string    `json:"id"`
-	ConversationID   string    `json:"conversationId,omitempty"`
-	AuthorID         string    `json:"authorId"`
-	AuthorScreenName string    `json:"authorScreenName"`
-	AuthorName       string    `json:"authorName"`
-	Text             string    `json:"text"`
-	CreatedAt        time.Time `json:"createdAt"`
-	LikeCount        int       `json:"likeCount"`
-	RetweetCount     int       `json:"retweetCount"`
-	ReplyCount       int       `json:"replyCount"`
-	QuoteCount       int       `json:"quoteCount"`
-	BookmarkCount    int       `json:"bookmarkCount"`
-	ViewCount        int       `json:"viewCount"`
-	Language         string    `json:"language,omitempty"`
-	IsRetweet        bool      `json:"isRetweet"`
-	IsQuote          bool      `json:"isQuote"`
-	IsReply          bool      `json:"isReply"`
-	InReplyToID      string    `json:"inReplyToId,omitempty"`
-	QuotedTweetID    string    `json:"quotedTweetId,omitempty"`
-	MediaURLs        []string  `json:"mediaUrls,omitempty"`
-	Hashtags         []string  `json:"hashtags,omitempty"`
-	MentionedUsers   []string  `json:"mentionedUsers,omitempty"`
-	URLs             []string  `json:"urls,omitempty"`
+	ID               string            `json:"id"`
+	ConversationID   string            `json:"conversationId,omitempty"`
+	AuthorID         string            `json:"authorId"`
+	AuthorScreenName string            `json:"authorScreenName"`
+	AuthorName       string            `json:"authorName"`
+	Text             string            `json:"text"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	LikeCount        int               `json:"likeCount"`
+	RetweetCount     int               `json:"retweetCount"`
+	ReplyCount       int               `json:"replyCount"`
+	QuoteCount       int               `json:"quoteCount"`
+	BookmarkCount    int               `json:"bookmarkCount"`
+	ViewCount        int               `json:"viewCount"`
+	Language         string            `json:"language,omitempty"`
+	IsRetweet        bool              `json:"isRetweet"`
+	IsQuote          bool              `json:"isQuote"`
+	IsReply          bool              `json:"isReply"`
+	InReplyToID      string            `json:"inReplyToId,omitempty"`
+	QuotedTweetID    string            `json:"quotedTweetId,omitempty"`
+	MediaURLs        []string          `json:"mediaUrls,omitempty"`
+	Hashtags         []string          `json:"hashtags,omitempty"`
+	MentionedUsers   []string          `json:"mentionedUsers,omitempty"`
+	URLs             []string          `json:"urls,omitempty"`
+	Raw              *RawTweetEnvelope `json:"raw,omitempty"`
 }
 
 // TweetPage is one page of tweets with a cursor for the next page.
