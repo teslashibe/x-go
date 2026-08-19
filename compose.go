@@ -180,14 +180,17 @@ func parseTweetFromCreateResponse(data json.RawMessage) (*Tweet, error) {
 
 	var envelope struct {
 		TweetResults struct {
-			Result tweetObj `json:"result"`
+			Result json.RawMessage `json:"result"`
 		} `json:"tweet_results"`
 	}
 	if err := json.Unmarshal(resultRaw, &envelope); err != nil {
 		return nil, fmt.Errorf("%w: parsing create tweet result: %v", ErrRequestFailed, err)
 	}
-	tweet := toTweet(envelope.TweetResults.Result)
-	if tweet.ID == "" {
+	tweet, ok, err := (tweetResult{Result: envelope.TweetResults.Result}).tweet()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, fmt.Errorf("%w: tweet creation returned empty ID", ErrRequestFailed)
 	}
 	return &tweet, nil

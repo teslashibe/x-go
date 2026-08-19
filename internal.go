@@ -60,13 +60,13 @@ type entryContent struct {
 }
 
 type itemContent struct {
-	ItemType     string        `json:"itemType"`
-	TweetResults *tweetResult  `json:"tweet_results"`
-	UserResults  *userResult   `json:"user_results"`
+	ItemType     string       `json:"itemType"`
+	TweetResults *tweetResult `json:"tweet_results"`
+	UserResults  *userResult  `json:"user_results"`
 }
 
 type tweetResult struct {
-	Result tweetObj `json:"result"`
+	Result json.RawMessage `json:"result"`
 }
 
 type userResult struct {
@@ -78,17 +78,38 @@ type userResult struct {
 // ---------------------------------------------------------------------------
 
 type tweetObj struct {
-	Typename string `json:"__typename"`
-	RestID   string `json:"rest_id"`
+	Typename string    `json:"__typename"`
+	RestID   string    `json:"rest_id"`
+	Tweet    *tweetObj `json:"tweet"`
 	Core     struct {
 		UserResults struct {
 			Result userObj `json:"result"`
 		} `json:"user_results"`
 	} `json:"core"`
-	Legacy               tweetLegacy `json:"legacy"`
-	Views                tweetViews  `json:"views"`
-	QuotedStatusResult   *tweetResult `json:"quoted_status_result"`
-	NoteTweet            *noteTweet   `json:"note_tweet"`
+	Legacy             tweetLegacy  `json:"legacy"`
+	Views              tweetViews   `json:"views"`
+	QuotedStatusResult *tweetResult `json:"quoted_status_result"`
+	NoteTweet          *noteTweet   `json:"note_tweet"`
+}
+
+func (r tweetResult) tweet() (Tweet, bool, error) {
+	if len(r.Result) == 0 || string(r.Result) == "null" {
+		return Tweet{}, false, nil
+	}
+	var o tweetObj
+	if err := json.Unmarshal(r.Result, &o); err != nil {
+		return Tweet{}, false, fmt.Errorf("%w: decoding tweet result: %v", ErrRequestFailed, err)
+	}
+	t := toTweet(o)
+	if t.ID == "" {
+		return Tweet{}, false, nil
+	}
+	t.Raw = &RawTweetEnvelope{
+		SchemaVersion: 1,
+		Provider:      "x_graphql",
+		Result:        append(json.RawMessage(nil), r.Result...),
+	}
+	return t, true, nil
 }
 
 type tweetViews struct {
@@ -105,21 +126,21 @@ type noteTweet struct {
 }
 
 type tweetLegacy struct {
-	FullText             string       `json:"full_text"`
-	FavoriteCount        int          `json:"favorite_count"`
-	RetweetCount         int          `json:"retweet_count"`
-	ReplyCount           int          `json:"reply_count"`
-	QuoteCount           int          `json:"quote_count"`
-	BookmarkCount        int          `json:"bookmark_count"`
-	ConversationIDStr    string       `json:"conversation_id_str"`
-	InReplyToStatusIDStr string       `json:"in_reply_to_status_id_str"`
-	Lang                 string       `json:"lang"`
-	CreatedAt            string       `json:"created_at"`
-	Entities             tweetEntities `json:"entities"`
-	ExtendedEntities     *extendedEntities `json:"extended_entities"`
-	RetweetedStatusResult *tweetResult `json:"retweeted_status_result"`
-	IsQuoteStatus        bool         `json:"is_quote_status"`
-	QuotedStatusIDStr    string       `json:"quoted_status_id_str"`
+	FullText              string            `json:"full_text"`
+	FavoriteCount         int               `json:"favorite_count"`
+	RetweetCount          int               `json:"retweet_count"`
+	ReplyCount            int               `json:"reply_count"`
+	QuoteCount            int               `json:"quote_count"`
+	BookmarkCount         int               `json:"bookmark_count"`
+	ConversationIDStr     string            `json:"conversation_id_str"`
+	InReplyToStatusIDStr  string            `json:"in_reply_to_status_id_str"`
+	Lang                  string            `json:"lang"`
+	CreatedAt             string            `json:"created_at"`
+	Entities              tweetEntities     `json:"entities"`
+	ExtendedEntities      *extendedEntities `json:"extended_entities"`
+	RetweetedStatusResult *tweetResult      `json:"retweeted_status_result"`
+	IsQuoteStatus         bool              `json:"is_quote_status"`
+	QuotedStatusIDStr     string            `json:"quoted_status_id_str"`
 }
 
 type tweetEntities struct {
@@ -162,7 +183,7 @@ type userObj struct {
 	Avatar         *struct {
 		ImageURL string `json:"image_url"`
 	} `json:"avatar"`
-	Location   *struct {
+	Location *struct {
 		Location string `json:"location"`
 	} `json:"location"`
 	ProfileBio *struct {
@@ -177,21 +198,21 @@ type userCore struct {
 }
 
 type userLegacy struct {
-	ScreenName         string       `json:"screen_name"`
-	Name               string       `json:"name"`
-	Description        string       `json:"description"`
-	Location           string       `json:"location"`
-	URL                string       `json:"url"`
-	FollowersCount     int          `json:"followers_count"`
-	FriendsCount       int          `json:"friends_count"`
-	StatusesCount      int          `json:"statuses_count"`
-	ListedCount        int          `json:"listed_count"`
-	Verified           bool         `json:"verified"`
-	CreatedAt          string       `json:"created_at"`
-	ProfileImageURLHTTPS string     `json:"profile_image_url_https"`
-	ProfileBannerURL   string       `json:"profile_banner_url"`
-	PinnedTweetIDsStr  []string     `json:"pinned_tweet_ids_str"`
-	Entities           *userEntities `json:"entities"`
+	ScreenName           string        `json:"screen_name"`
+	Name                 string        `json:"name"`
+	Description          string        `json:"description"`
+	Location             string        `json:"location"`
+	URL                  string        `json:"url"`
+	FollowersCount       int           `json:"followers_count"`
+	FriendsCount         int           `json:"friends_count"`
+	StatusesCount        int           `json:"statuses_count"`
+	ListedCount          int           `json:"listed_count"`
+	Verified             bool          `json:"verified"`
+	CreatedAt            string        `json:"created_at"`
+	ProfileImageURLHTTPS string        `json:"profile_image_url_https"`
+	ProfileBannerURL     string        `json:"profile_banner_url"`
+	PinnedTweetIDsStr    []string      `json:"pinned_tweet_ids_str"`
+	Entities             *userEntities `json:"entities"`
 }
 
 type userEntities struct {
@@ -271,7 +292,10 @@ func toUser(o userObj) User {
 func toTweet(o tweetObj) Tweet {
 	// Handle TweetWithVisibilityResults wrapper
 	if o.Typename == "TweetWithVisibilityResults" {
-		return Tweet{}
+		if o.Tweet == nil {
+			return Tweet{}
+		}
+		o = *o.Tweet
 	}
 
 	t := Tweet{
@@ -363,7 +387,11 @@ func parseTweetPage(raw json.RawMessage, timelineKey string) (TweetPage, error) 
 			entries = append(entries, *inst.Entry)
 		}
 		for _, entry := range entries {
-			if tweet, ok := extractTweetFromEntry(entry); ok {
+			tweet, ok, err := extractTweetFromEntry(entry)
+			if err != nil {
+				return TweetPage{}, err
+			}
+			if ok {
 				if tweet.ID != "" {
 					page.Tweets = append(page.Tweets, tweet)
 				}
@@ -375,8 +403,11 @@ func parseTweetPage(raw json.RawMessage, timelineKey string) (TweetPage, error) 
 			// Module entries (e.g. search results grouped in modules)
 			for _, item := range entry.Content.Items {
 				if item.Item.ItemContent.TweetResults != nil {
-					tw := toTweet(item.Item.ItemContent.TweetResults.Result)
-					if tw.ID != "" {
+					tw, ok, err := item.Item.ItemContent.TweetResults.tweet()
+					if err != nil {
+						return TweetPage{}, err
+					}
+					if ok {
 						page.Tweets = append(page.Tweets, tw)
 					}
 				}
@@ -416,12 +447,12 @@ func parseUserPage(raw json.RawMessage, timelineKey string) (UserPage, error) {
 	return page, nil
 }
 
-func extractTweetFromEntry(entry timelineEntry) (Tweet, bool) {
+func extractTweetFromEntry(entry timelineEntry) (Tweet, bool, error) {
 	ic := entry.Content.ItemContent
 	if ic == nil || ic.TweetResults == nil {
-		return Tweet{}, false
+		return Tweet{}, false, nil
 	}
-	return toTweet(ic.TweetResults.Result), true
+	return ic.TweetResults.tweet()
 }
 
 func extractUserFromEntry(entry timelineEntry) (User, bool) {

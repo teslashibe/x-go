@@ -13,10 +13,10 @@ func (c *Client) GetTweet(ctx context.Context, tweetID string) (*Tweet, error) {
 	}
 
 	vars := map[string]interface{}{
-		"tweetId":                                tweetID,
-		"withCommunity":                          true,
-		"includePromotedContent":                 false,
-		"withVoice":                              false,
+		"tweetId":                tweetID,
+		"withCommunity":          true,
+		"includePromotedContent": false,
+		"withVoice":              false,
 	}
 
 	raw, err := c.graphqlGET(ctx, "TweetResultByRestId", vars)
@@ -26,18 +26,20 @@ func (c *Client) GetTweet(ctx context.Context, tweetID string) (*Tweet, error) {
 
 	var data struct {
 		TweetResult struct {
-			Result tweetObj `json:"result"`
+			Result json.RawMessage `json:"result"`
 		} `json:"tweetResult"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("%w: decoding tweet: %v", ErrRequestFailed, err)
 	}
 
-	if data.TweetResult.Result.RestID == "" {
+	t, ok, err := (tweetResult{Result: data.TweetResult.Result}).tweet()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, ErrNotFound
 	}
-
-	t := toTweet(data.TweetResult.Result)
 	return &t, nil
 }
 
@@ -80,7 +82,11 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 	detail := &TweetDetail{}
 	for _, inst := range tl.Instructions {
 		for _, entry := range inst.Entries {
-			if tweet, ok := extractTweetFromEntry(entry); ok && tweet.ID != "" {
+			tweet, ok, err := extractTweetFromEntry(entry)
+			if err != nil {
+				return nil, err
+			}
+			if ok && tweet.ID != "" {
 				if tweet.ID == tweetID {
 					detail.Tweet = tweet
 				} else {
@@ -90,7 +96,13 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 			}
 			for _, item := range entry.Content.Items {
 				if item.Item.ItemContent.TweetResults != nil {
-					tw := toTweet(item.Item.ItemContent.TweetResults.Result)
+					tw, ok, err := item.Item.ItemContent.TweetResults.tweet()
+					if err != nil {
+						return nil, err
+					}
+					if !ok {
+						continue
+					}
 					if tw.ID == tweetID {
 						detail.Tweet = tw
 					} else if tw.ID != "" {
