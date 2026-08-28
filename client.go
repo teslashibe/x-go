@@ -366,7 +366,8 @@ func (c *Client) adaptiveGap() time.Duration {
 	// Spread remaining quota evenly across the reset window (90% safety margin).
 	if rs.Remaining > 0 && !rs.Reset.IsZero() {
 		if d := time.Until(rs.Reset); d > 0 {
-			spread := d / time.Duration(float64(rs.Remaining)*0.9)
+			slots := max(int64(float64(rs.Remaining)*0.9), 1)
+			spread := d / time.Duration(slots)
 			if spread > c.minGap {
 				return spread
 			}
