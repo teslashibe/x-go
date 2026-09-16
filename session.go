@@ -203,6 +203,7 @@ func (c *Client) RefreshQueryIDs(ctx context.Context) error {
 		qid := string(m[1])
 		c.queryIDs[opName] = qid
 	}
+	c.queryIDsRefreshed = true
 	c.reqMu.Unlock()
 
 	return nil

@@ -2,10 +2,49 @@ package x
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 )
+
+// SearchCapabilityEvidence is the bounded result of a read-only SearchTimeline
+// capability check. Errors retain safe transport evidence through
+// OperationError; no provider content or search results are returned.
+type SearchCapabilityEvidence struct {
+	Ready                  bool
+	RecoveredAfterRefresh  bool
+	TransactionReady       bool
+	QueryMetadataRefreshed bool
+	First                  error
+	Final                  error
+}
+
+// DiagnoseSearchCapability performs at most two SearchTimeline calls. A first
+// not-found response triggers one metadata refresh and one identical retry.
+func (c *Client) DiagnoseSearchCapability(ctx context.Context) SearchCapabilityEvidence {
+	evidence := SearchCapabilityEvidence{TransactionReady: c.TransactionReady(), QueryMetadataRefreshed: c.QueryMetadataRefreshed()}
+	_, first := c.SearchTweetsPage(ctx, "news", 1, "", WithSearchType(SearchLatest))
+	if first == nil {
+		evidence.Ready = true
+		return evidence
+	}
+	evidence.First = first
+	if !errors.Is(first, ErrNotFound) {
+		evidence.Final = first
+		return evidence
+	}
+	if err := c.RefreshQueryIDs(ctx); err != nil {
+		evidence.Final = errors.Join(first, err)
+		return evidence
+	}
+	evidence.QueryMetadataRefreshed = true
+	_, final := c.SearchTweetsPage(ctx, "news", 1, "", WithSearchType(SearchLatest))
+	evidence.Final = final
+	evidence.Ready = final == nil
+	evidence.RecoveredAfterRefresh = final == nil
+	return evidence
+}
 
 // MaxSearchQueryLength is X's effective SearchTimeline raw-query limit.
 const MaxSearchQueryLength = 512

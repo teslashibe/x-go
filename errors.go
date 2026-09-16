@@ -2,6 +2,7 @@ package x
 
 import (
 	"errors"
+	"fmt"
 )
 
 var (
@@ -30,6 +31,25 @@ var (
 	ErrMediaProcessingFailed  = errors.New("x: media processing failed")
 	ErrMediaProcessingTimeout = errors.New("x: media processing did not complete in time")
 )
+
+// OperationError retains bounded, non-secret evidence about a failed provider
+// operation. It deliberately excludes request URLs, query IDs, variables,
+// response bodies, cookies, identities, and proxy details.
+type OperationError struct {
+	Operation              string
+	Status                 int
+	ContentType            string
+	TransactionIDAttached  bool
+	TransactionReady       bool
+	QueryMetadataRefreshed bool
+	Err                    error
+}
+
+func (e *OperationError) Error() string {
+	return fmt.Sprintf("x: %s failed: %v", e.Operation, e.Err)
+}
+
+func (e *OperationError) Unwrap() error { return e.Err }
 
 // OutcomeError classifies whether a failed write definitely did not complete
 // or may have completed before the transport failed.

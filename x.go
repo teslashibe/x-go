@@ -97,23 +97,24 @@ var defaultFeatures = map[string]bool{
 
 // Client is an X API client. It is safe for concurrent use.
 type Client struct {
-	cookies    Cookies
-	restID     string
-	httpClient *http.Client
-	userAgent  string
-	queryIDs   map[string]string
-	features   map[string]bool
-	maxRetries int
-	retryBase  time.Duration
-	minGap     time.Duration
-	gapMu      sync.Mutex
-	lastReqAt  time.Time
-	reqMu      sync.RWMutex // protects queryIDs
-	rlMu       sync.Mutex
-	rlState    RateLimitState
-	viewer     *User
-	txState    transactionState
-	txInitErr  error // non-nil if initTransaction failed; Followers/Search may 404
+	cookies           Cookies
+	restID            string
+	httpClient        *http.Client
+	userAgent         string
+	queryIDs          map[string]string
+	features          map[string]bool
+	maxRetries        int
+	retryBase         time.Duration
+	minGap            time.Duration
+	gapMu             sync.Mutex
+	lastReqAt         time.Time
+	reqMu             sync.RWMutex // protects queryIDs
+	queryIDsRefreshed bool
+	rlMu              sync.Mutex
+	rlState           RateLimitState
+	viewer            *User
+	txState           transactionState
+	txInitErr         error // non-nil if initTransaction failed; Followers/Search may 404
 }
 
 // Option configures a Client.
@@ -248,6 +249,17 @@ func (c *Client) RateLimit() RateLimitState {
 // (Followers, SearchTimeline) will return 404.
 func (c *Client) TransactionInitErr() error {
 	return c.txInitErr
+}
+
+// TransactionReady reports whether requests can carry X's transaction header.
+func (c *Client) TransactionReady() bool { return c.txState.initialized }
+
+// QueryMetadataRefreshed reports whether this client successfully refreshed
+// GraphQL operation metadata after construction.
+func (c *Client) QueryMetadataRefreshed() bool {
+	c.reqMu.RLock()
+	defer c.reqMu.RUnlock()
+	return c.queryIDsRefreshed
 }
 
 // Me returns the authenticated user's profile.

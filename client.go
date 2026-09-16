@@ -114,7 +114,7 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 	defer resp.Body.Close()
 
 	if err := c.checkStatus(resp); err != nil {
-		return nil, err
+		return nil, c.operationError(operationName, req, resp, err)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
@@ -123,6 +123,18 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 	}
 
 	return c.parseGQLResponse(body)
+}
+
+func (c *Client) operationError(operation string, req *http.Request, resp *http.Response, err error) error {
+	return &OperationError{
+		Operation:              operation,
+		Status:                 resp.StatusCode,
+		ContentType:            strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]),
+		TransactionIDAttached:  req.Header.Get("X-Client-Transaction-Id") != "",
+		TransactionReady:       c.TransactionReady(),
+		QueryMetadataRefreshed: c.QueryMetadataRefreshed(),
+		Err:                    err,
+	}
 }
 
 // doGraphQLPOST performs a single GraphQL POST request.
