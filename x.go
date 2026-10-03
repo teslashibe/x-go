@@ -112,6 +112,8 @@ type Client struct {
 	queryIDsRefreshed bool
 	rlMu              sync.Mutex
 	rlState           RateLimitState
+	operationRates    map[string]RateLimitState
+	operationSlots    map[string]time.Time
 	viewer            *User
 	txState           transactionState
 	txInitErr         error // non-nil if initTransaction failed; Followers/Search may 404
