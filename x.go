@@ -108,6 +108,7 @@ type Client struct {
 	minGap            time.Duration
 	gapMu             sync.Mutex
 	lastReqAt         time.Time
+	cooldownUntil     time.Time    // protected by gapMu; applies to queued operations
 	reqMu             sync.RWMutex // protects queryIDs
 	queryIDsRefreshed bool
 	rlMu              sync.Mutex

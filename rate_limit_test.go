@@ -123,3 +123,32 @@ func TestConcurrentGraphQLReadsKeepSharedMinimumGap(t *testing.T) {
 		t.Fatal("concurrent operations lost shared request pacing")
 	}
 }
+
+func TestQueuedGraphQLReadObservesNew429Cooldown(t *testing.T) {
+	started := make(chan struct{})
+	var calls atomic.Int32
+	c := newTestClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			time.Sleep(50 * time.Millisecond)
+			resp := quotaResponse(0, time.Now().Add(time.Hour))
+			resp.StatusCode = http.StatusTooManyRequests
+			return resp, nil
+		}
+		return jsonResponse(http.StatusOK, `{"data":{}}`), nil
+	}))
+	c.minGap = 100 * time.Millisecond
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := c.doGraphQLGET(context.Background(), "viewer", "Viewer", []byte(`{}`), []byte(`{}`))
+		firstDone <- err
+	}()
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err := c.doGraphQLGET(ctx, "profile", "UserByRestId", []byte(`{}`), []byte(`{}`))
+	var limited *RateLimitError
+	if !errors.As(<-firstDone, &limited) || !errors.Is(err, context.DeadlineExceeded) || calls.Load() != 1 {
+		t.Fatal("queued operation bypassed the new account cooldown", err, calls.Load())
+	}
+}

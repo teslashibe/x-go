@@ -357,14 +357,31 @@ func (c *Client) waitForGap(ctx context.Context, operation ...string) {
 	c.lastReqAt = nextSlot
 	c.gapMu.Unlock()
 
-	if wait := time.Until(nextSlot); wait > 0 {
-		select {
-		case <-ctx.Done():
-		case <-time.After(wait):
+	for {
+		if wait := time.Until(nextSlot); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
-	}
-	if ctx.Err() != nil {
-		return
+		if ctx.Err() != nil {
+			return
+		}
+		c.gapMu.Lock()
+		if nextSlot.Before(c.cooldownUntil) {
+			nextSlot = c.lastReqAt.Add(gap)
+			if nextSlot.Before(time.Now()) {
+				nextSlot = time.Now()
+			}
+			c.lastReqAt = nextSlot
+			c.gapMu.Unlock()
+			continue
+		}
+		c.gapMu.Unlock()
+		break
 	}
 	// Clear RetryAfter once we've waited past it.
 	c.rlMu.Lock()
@@ -556,8 +573,11 @@ func (c *Client) checkStatus(resp *http.Response, operation ...string) error {
 		}
 		c.rlMu.Unlock()
 		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
+		if earliest := time.Now().Add(wait); c.cooldownUntil.Before(earliest) {
+			c.cooldownUntil = earliest
+			if c.lastReqAt.Before(earliest) {
+				c.lastReqAt = earliest
+			}
 		}
 		c.gapMu.Unlock()
 		return &RateLimitError{Wait: wait}
