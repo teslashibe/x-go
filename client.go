@@ -91,7 +91,7 @@ func retryWait(lastErr error, base time.Duration, attempt int) time.Duration {
 
 // doGraphQLGET performs a single GraphQL GET request.
 func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, varsJSON, featsJSON []byte) (json.RawMessage, error) {
-	c.waitForGap(ctx)
+	c.waitForGap(ctx, operationName)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -113,7 +113,7 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 	}
 	defer resp.Body.Close()
 
-	if err := c.checkStatus(resp); err != nil {
+	if err := c.checkStatus(resp, operationName); err != nil {
 		return nil, c.operationError(operationName, req, resp, err)
 	}
 
@@ -139,7 +139,7 @@ func (c *Client) operationError(operation string, req *http.Request, resp *http.
 
 // doGraphQLPOST performs a single GraphQL POST request.
 func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
-	c.waitForGap(ctx)
+	c.waitForGap(ctx, operationName)
 	if ctx.Err() != nil {
 		return nil, errors.Join(errWriteNotAttempted, ctx.Err())
 	}
@@ -169,7 +169,7 @@ func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, v
 	}
 	defer resp.Body.Close()
 
-	if err := c.checkStatus(resp); err != nil {
+	if err := c.checkStatus(resp, operationName); err != nil {
 		return nil, err
 	}
 
@@ -337,8 +337,16 @@ func (c *Client) queryID(name string) string {
 // waitForGap enforces the leaky-bucket minimum request gap, adapting based
 // on X's rate limit headers. When remaining requests are low, the gap widens
 // automatically to spread requests across the remaining window.
-func (c *Client) waitForGap(ctx context.Context) {
-	gap := c.adaptiveGap()
+func (c *Client) waitForGap(ctx context.Context, operation ...string) {
+	if len(operation) > 0 && operation[0] != "" {
+		if !c.waitForOperationQuota(ctx, operation[0]) {
+			return
+		}
+	}
+	gap := c.minGap
+	if len(operation) == 0 {
+		gap = c.adaptiveGap()
+	}
 
 	c.gapMu.Lock()
 	now := time.Now()
@@ -349,16 +357,96 @@ func (c *Client) waitForGap(ctx context.Context) {
 	c.lastReqAt = nextSlot
 	c.gapMu.Unlock()
 
-	if wait := time.Until(nextSlot); wait > 0 {
-		select {
-		case <-ctx.Done():
-		case <-time.After(wait):
+	for {
+		if wait := time.Until(nextSlot); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
+		if ctx.Err() != nil {
+			return
+		}
+		c.gapMu.Lock()
+		if nextSlot.Before(c.cooldownUntil) {
+			nextSlot = c.lastReqAt.Add(gap)
+			if nextSlot.Before(time.Now()) {
+				nextSlot = time.Now()
+			}
+			c.lastReqAt = nextSlot
+			c.gapMu.Unlock()
+			continue
+		}
+		c.gapMu.Unlock()
+		break
 	}
 	// Clear RetryAfter once we've waited past it.
 	c.rlMu.Lock()
 	c.rlState.RetryAfter = 0
+	if len(operation) > 0 {
+		state := c.operationRates[operation[0]]
+		state.RetryAfter = 0
+		if c.operationRates != nil {
+			c.operationRates[operation[0]] = state
+		}
+	}
 	c.rlMu.Unlock()
+}
+
+// GraphQL quotas belong to operations. Reserve that operation's slot before
+// taking a shared minimum-gap slot; a waiting endpoint must not stall another
+// endpoint. HTTP 429 still advances the shared account cooldown below.
+func (c *Client) waitForOperationQuota(ctx context.Context, operation string) bool {
+	c.rlMu.Lock()
+	state := c.operationRates[operation]
+	c.rlMu.Unlock()
+	gap := c.gapForState(state)
+	now := time.Now()
+	c.gapMu.Lock()
+	previous := c.operationSlots[operation]
+	next := previous.Add(gap)
+	if next.Before(now) {
+		next = now
+	}
+	if state.Remaining == 0 && !state.Reset.IsZero() {
+		if reset := state.Reset.Add(50 * time.Millisecond); next.Before(reset) {
+			next = reset
+		}
+	}
+	if c.operationSlots == nil {
+		c.operationSlots = make(map[string]time.Time)
+	}
+	c.operationSlots[operation] = next
+	c.gapMu.Unlock()
+	releaseCancelled := func() {
+		c.gapMu.Lock()
+		if c.operationSlots[operation].Equal(next) {
+			if previous.IsZero() {
+				delete(c.operationSlots, operation)
+			} else {
+				c.operationSlots[operation] = previous
+			}
+		}
+		c.gapMu.Unlock()
+	}
+	if delay := time.Until(next); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			releaseCancelled()
+			return false
+		case <-timer.C:
+		}
+	}
+	if ctx.Err() != nil {
+		releaseCancelled()
+		return false
+	}
+	return true
 }
 
 // adaptiveGap returns the delay before the next request based on observed
@@ -368,7 +456,10 @@ func (c *Client) adaptiveGap() time.Duration {
 	c.rlMu.Lock()
 	rs := c.rlState
 	c.rlMu.Unlock()
+	return c.gapForState(rs)
+}
 
+func (c *Client) gapForState(rs RateLimitState) time.Duration {
 	// Quota exhausted — wait for the window to reset.
 	if rs.Remaining == 0 && !rs.Reset.IsZero() {
 		if d := time.Until(rs.Reset); d > 0 {
@@ -390,28 +481,39 @@ func (c *Client) adaptiveGap() time.Duration {
 
 // updateRateLimit reads rate-limit headers from a response and updates
 // the client's tracked state. Call on every HTTP response.
-func (c *Client) updateRateLimit(resp *http.Response) {
+func (c *Client) updateRateLimit(resp *http.Response, operation ...string) {
 	h := resp.Header
 	c.rlMu.Lock()
 	defer c.rlMu.Unlock()
+	state := c.rlState
+	if len(operation) > 0 {
+		state = c.operationRates[operation[0]]
+	}
 	if v := rlHeader(h, "Limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			c.rlState.Limit = n
+			state.Limit = n
 		}
 	}
 	if v := rlHeader(h, "Remaining"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			c.rlState.Remaining = n
+			state.Remaining = n
 		}
 	}
 	if v := rlHeader(h, "Reset"); v != "" {
 		if ts, err := strconv.ParseInt(v, 10, 64); err == nil {
 			if ts > 1_000_000_000 {
-				c.rlState.Reset = time.Unix(ts, 0) // Unix epoch (Twitter/X style)
+				state.Reset = time.Unix(ts, 0) // Unix epoch (Twitter/X style)
 			} else {
-				c.rlState.Reset = time.Now().Add(time.Duration(ts) * time.Second) // relative (Reddit style)
+				state.Reset = time.Now().Add(time.Duration(ts) * time.Second) // relative (Reddit style)
 			}
 		}
+	}
+	c.rlState = state
+	if len(operation) > 0 {
+		if c.operationRates == nil {
+			c.operationRates = make(map[string]RateLimitState)
+		}
+		c.operationRates[operation[0]] = state
 	}
 }
 
@@ -428,8 +530,8 @@ func rlHeader(h http.Header, suffix string) string {
 
 // checkStatus maps HTTP status codes to sentinel errors.
 // On non-OK responses, it drains the body so the TCP connection can be reused.
-func (c *Client) checkStatus(resp *http.Response) error {
-	c.updateRateLimit(resp)
+func (c *Client) checkStatus(resp *http.Response, operation ...string) error {
+	c.updateRateLimit(resp, operation...)
 
 	if resp.StatusCode == http.StatusOK {
 		return nil
@@ -456,15 +558,26 @@ func (c *Client) checkStatus(resp *http.Response) error {
 			wait = parseRetryAfter(resp.Header.Get("Retry-After"), 60*time.Second)
 		}
 		c.rlMu.Lock()
-		c.rlState.Remaining = 0
-		c.rlState.RetryAfter = wait
-		if c.rlState.Reset.IsZero() || time.Until(c.rlState.Reset) < wait {
-			c.rlState.Reset = time.Now().Add(wait)
+		state := c.rlState
+		if len(operation) > 0 {
+			state = c.operationRates[operation[0]]
+		}
+		state.Remaining = 0
+		state.RetryAfter = wait
+		if state.Reset.IsZero() || time.Until(state.Reset) < wait {
+			state.Reset = time.Now().Add(wait)
+		}
+		c.rlState = state
+		if len(operation) > 0 {
+			c.operationRates[operation[0]] = state
 		}
 		c.rlMu.Unlock()
 		c.gapMu.Lock()
-		if earliest := time.Now().Add(wait); c.lastReqAt.Before(earliest) {
-			c.lastReqAt = earliest
+		if earliest := time.Now().Add(wait); c.cooldownUntil.Before(earliest) {
+			c.cooldownUntil = earliest
+			if c.lastReqAt.Before(earliest) {
+				c.lastReqAt = earliest
+			}
 		}
 		c.gapMu.Unlock()
 		return &RateLimitError{Wait: wait}

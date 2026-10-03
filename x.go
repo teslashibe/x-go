@@ -108,10 +108,13 @@ type Client struct {
 	minGap            time.Duration
 	gapMu             sync.Mutex
 	lastReqAt         time.Time
+	cooldownUntil     time.Time    // protected by gapMu; applies to queued operations
 	reqMu             sync.RWMutex // protects queryIDs
 	queryIDsRefreshed bool
 	rlMu              sync.Mutex
 	rlState           RateLimitState
+	operationRates    map[string]RateLimitState
+	operationSlots    map[string]time.Time
 	viewer            *User
 	txState           transactionState
 	txInitErr         error // non-nil if initTransaction failed; Followers/Search may 404
