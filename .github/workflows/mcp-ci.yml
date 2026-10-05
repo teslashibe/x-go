@@ -1,10 +1,10 @@
-name: MCP CI
+name: Go CI
 
 on:
   push:
     branches: [main]
     paths:
-      - "mcp/**"
+      - "**/*.go"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/mcp-ci.yml"
@@ -18,7 +18,7 @@ on:
 
 jobs:
   mcp:
-    name: mcp package
+    name: Go packages
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,5 +33,5 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
-      - name: Test mcp package
-        run: go test -race -count=1 ./mcp/...
+      - name: Test all packages
+        run: go test -race -count=1 ./...
