@@ -128,10 +128,11 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 		if wait == 0 {
 			wait = parseRetryAfter(rlHeader(resp.Header, "Reset"), 0)
 		}
-		if wait > 0 {
-			c.recordRateLimit(wait)
-			return nil, &RateLimitError{Wait: wait}
+		if wait <= 0 {
+			wait = 60 * time.Second
 		}
+		c.recordRateLimit(wait)
+		return nil, &RateLimitError{Wait: wait}
 	}
 	return data, parseErr
 }
@@ -365,6 +366,10 @@ func (c *Client) waitForGap(ctx context.Context) {
 		case <-ctx.Done():
 		case <-time.After(wait):
 		}
+	}
+	// Cancellation must not erase a provider cooldown that remains active.
+	if ctx.Err() != nil {
+		return
 	}
 	// Clear RetryAfter once we've waited past it.
 	c.rlMu.Lock()

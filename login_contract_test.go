@@ -173,3 +173,38 @@ func TestSessionNewClientUsesBrowserUserAgent(t *testing.T) {
 		t.Error("bootstrap failure concealed")
 	}
 }
+
+func TestProviderRateLimitWithoutHeadersUsesConservativeCooldown(t *testing.T) {
+	calls := 0
+	c := fixtureViewerClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return jsonResponse(200, `{"errors":[{"code":88,"message":"rate limit"}]}`), nil
+	}))
+	_, err := c.graphqlGET(context.Background(), "Viewer", nil)
+	var limited *RateLimitError
+	if !errors.As(err, &limited) || limited.Wait != 60*time.Second || c.RateLimit().RetryAfter != 60*time.Second || retryWait(err, time.Millisecond, 1) != 60*time.Second {
+		t.Fatalf("missing conservative cooldown: %v", err)
+	}
+	// A subsequent read remains behind the same cooldown even if it is cancelled.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err = c.graphqlGET(ctx, "Viewer", nil)
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 || c.RateLimit().RetryAfter != 60*time.Second {
+		t.Fatalf("cancelled read bypassed cooldown: calls=%d error=%v", calls, err)
+	}
+}
+func TestProviderRateLimitWithoutHeadersDoesNotFastRetry(t *testing.T) {
+	calls := 0
+	c := fixtureViewerClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return jsonResponse(200, `{"errors":[{"code":88,"message":"rate limit"}]}`), nil
+	}))
+	c.maxRetries = 3
+	c.retryBase = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := c.graphqlGET(ctx, "Viewer", nil)
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+		t.Fatalf("rate limit retried early: calls=%d error=%v", calls, err)
+	}
+}
