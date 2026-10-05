@@ -23,6 +23,9 @@ jobs:
       - name: Vet & build
         run: go vet ./... && go build ./...
 
+      - name: Test all packages
+        run: go test -race -count=1 ./...
+
       - name: Bump version and push tag
         id: tag
         uses: mathieudutour/github-tag-action@v6.2

@@ -56,7 +56,7 @@ func NewBrowserLogin(config BrowserLoginConfig) (*BrowserLogin, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, browserError("invalid_request", 0, 0)
 	}
-	hc := http.Client{Timeout: 30 * time.Second}
+	hc := http.Client{Timeout: 180 * time.Second}
 	if config.HTTPClient != nil {
 		hc = *config.HTTPClient
 	}
@@ -205,11 +205,6 @@ func (b *BrowserLogin) Continue(ctx context.Context, operation BrowserLoginOpera
 	if strings.TrimSpace(challengeID) == "" || strings.TrimSpace(verificationCode) == "" {
 		return nil, browserError("invalid_request", 0, 0)
 	}
-	// A continuation must use the parked browser. No new launch, credential
-	// submission or solver task is authorized by entering a verification code.
-	operation.Budget.MaxBrowserAttempts = 0
-	operation.Budget.MaxCredentialAttempts = 0
-	operation.Budget.MaxSolverAttempts = 0
 	return b.login(ctx, operation, "", "", challengeID, verificationCode, false)
 }
 func (b *BrowserLogin) Cancel(ctx context.Context, operation BrowserLoginOperation) error {
@@ -266,15 +261,20 @@ func validateBrowserOperation(o BrowserLoginOperation, deadline bool) error {
 	if deadline && o.Budget.DeadlineAt.IsZero() {
 		return browserError("invalid_request", 0, 0)
 	}
-	if deadline && !o.Budget.DeadlineAt.After(time.Now()) {
-		return nil
-	} // caller returns context deadline error
 	return nil
 }
 
 func (b *BrowserLogin) login(ctx context.Context, o BrowserLoginOperation, username, password, id, code string, harvest bool) (*BrowserLoginResult, error) {
 	if err := validateBrowserOperation(o, true); err != nil {
 		return nil, err
+	}
+	aggregateBudget := o.Budget
+	if id != "" {
+		// Retained-browser continuation may spend no new browser, credential
+		// or solver allowance. The response still reports aggregate work.
+		o.Budget.MaxBrowserAttempts = 0
+		o.Budget.MaxCredentialAttempts = 0
+		o.Budget.MaxSolverAttempts = 0
 	}
 	deadline := o.Budget.DeadlineAt
 	for _, cap := range []time.Time{time.Now().Add(240 * time.Second), time.Now().Add(b.hc.Timeout)} {
@@ -310,13 +310,19 @@ func (b *BrowserLogin) login(ctx context.Context, o BrowserLoginOperation, usern
 	}
 	var out browserResultWire
 	status, err := b.do(ctx, http.MethodPost, "/v1/login/bounded", browserRequest{o, "x", username, password, id, code}, &out)
-	if err != nil {
-		return nil, err
-	}
-	if !out.validAttempts(o.Budget) || out.DeadlineAt.IsZero() || out.DeadlineAt.After(deadline) {
+	if !out.validAttempts(aggregateBudget) || out.DeadlineAt.IsZero() || out.DeadlineAt.After(deadline) {
+		// A transport/API failure may report no work metadata. Preserve its
+		// classification and return no result: callers must account unknown
+		// work conservatively. A purported successful result must prove bounds.
+		if err != nil && out.Attempts == nil {
+			return nil, err
+		}
 		return nil, browserError("protocol", status, 0)
 	}
 	result := &BrowserLoginResult{Attempts: BrowserLoginAttempts{*out.Attempts.Browser, *out.Attempts.Credential, *out.Attempts.Solver, out.Attempts.Complete}, DeadlineAt: out.DeadlineAt}
+	if err != nil {
+		return result, err
+	}
 	if out.Challenge != nil {
 		ch := out.Challenge
 		if out.OK || (status != 200 && status != 401) || out.FailureType != "verification_required" || ch.ID == "" || len(ch.ID) > 1024 || ch.Method == "" || len(ch.Method) > 128 || len(ch.MaskedDestination) > 256 || ch.ExpiresAt.IsZero() || !ch.ExpiresAt.After(time.Now()) || ch.ExpiresAt.After(out.DeadlineAt) {
@@ -328,7 +334,16 @@ func (b *BrowserLogin) login(ctx context.Context, o BrowserLoginOperation, usern
 	if !out.OK || status < 200 || status >= 300 {
 		return result, browserError(classifyBrowserFailure(out.FailureType, status), status, 0)
 	}
+	if out.FailureType != "" {
+		return nil, browserError("protocol", status, 0)
+	}
 	s := Session{AuthToken: out.Session.AuthToken, CT0: out.Session.CT0, Twid: out.Session.Twid, KDT: out.Session.KDT, UserAgent: out.Session.UserAgent, Proxy: o.ProxyURL}
+	// Conflicting projections are malformed, not a candidate session.
+	for key, value := range map[string]string{"auth_token": s.AuthToken, "ct0": s.CT0, "twid": s.Twid, "kdt": s.KDT} {
+		if cookie := out.Cookies[key]; value != "" && cookie != "" && cookie != value {
+			return nil, browserError("protocol", status, 0)
+		}
+	}
 	if s.AuthToken == "" {
 		s.AuthToken = out.Cookies["auth_token"]
 	}
@@ -371,7 +386,7 @@ func classifyBrowserFailure(kind string, status int) string {
 	switch kind {
 	case "verification_required", "captcha_required":
 		return "challenge"
-	case "challenge_not_found":
+	case "challenge_not_found", "challenge_expired":
 		return "challenge_expired"
 	case "operation_owner_mismatch", "challenge_identity_mismatch", "proxy_lease_mismatch", "proxy_identity_mismatch":
 		return "owner_mismatch"
@@ -438,10 +453,11 @@ func (b *BrowserLogin) do(ctx context.Context, method, path string, body, target
 		OK      bool            `json:"ok"`
 		Data    json.RawMessage `json:"data"`
 		Error   *struct {
-			Code string `json:"code"`
+			Code    string          `json:"code"`
+			Details json.RawMessage `json:"details"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(raw, &envelope) != nil || envelope.Version != "v1" {
+	if json.Unmarshal(raw, &envelope) != nil || envelope.Version != "v1" || (envelope.OK && envelope.Error != nil) {
 		return resp.StatusCode, browserError("protocol", resp.StatusCode, 0)
 	}
 	wait := parseRetryAfter(resp.Header.Get("Retry-After"), 0)
@@ -452,6 +468,9 @@ func (b *BrowserLogin) do(ctx context.Context, method, path string, body, target
 		kind := ""
 		if envelope.Error != nil {
 			kind = envelope.Error.Code
+			if _, ok := target.(*browserResultWire); ok && len(envelope.Error.Details) > 0 {
+				_ = json.Unmarshal(envelope.Error.Details, target)
+			}
 		}
 		return resp.StatusCode, browserError(classifyBrowserFailure(kind, resp.StatusCode), resp.StatusCode, wait)
 	}
