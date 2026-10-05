@@ -76,14 +76,11 @@ operation := x.BrowserLoginOperation{
     },
 }
 
-// Harvest an existing browser profile without submitting credentials.
-result, err := browser.Harvest(ctx, operation)
-// If the profile is explicitly logged out, let the user choose to start login.
-if errors.Is(err, x.ErrUnauthorized) {
-    result, err = browser.Start(ctx, x.BrowserLoginRequest{
-        Username: username, Password: password, Operation: operation,
-    })
-}
+// Run this only after the user chooses to log in. Start may use the browser
+// it launches for the credential flow; there is no preceding harvest attempt.
+result, err := browser.Start(ctx, x.BrowserLoginRequest{
+    Username: username, Password: password, Operation: operation,
+})
 if err != nil { return err }
 if result.Challenge != nil {
     // Present Method, MaskedDestination and ExpiresAt in the UI. The UI returns
@@ -101,6 +98,25 @@ if err != nil { return err }
 // Compare me.ID / me.ScreenName with the intended account before privately
 // saving result.Session. Cookie presence alone is not identity verification.
 ```
+
+Credentialless profile recovery is a separate operation:
+
+```go
+// Use a separately bounded recovery operation with zero password allowance.
+harvestOperation.Budget.MaxCredentialAttempts = 0
+result, err := browser.Harvest(ctx, harvestOperation)
+if err != nil {
+    // Record known result.Attempts, or conservatively account for unknown work
+    // when result is nil. Return a logged-out result to the UI for a decision.
+    // Do not automatically call Start or reset the browser allowance here.
+    return err
+}
+// Verify result.Session and the intended identity before saving it, as above.
+```
+
+After a failed harvest, another browser launch requires an explicit user login
+action and a new bounded operation. Account for the harvest's browser work and
+retain any provider cooldown before authorizing it.
 
 Keep the original profile, owner, proxy lease and absolute deadline for every
 continuation and `browser.Cancel(ctx, operation)`. Cancel remains available
