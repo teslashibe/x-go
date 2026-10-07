@@ -72,7 +72,7 @@ func TestBrowserLoginStartContinueCancel(t *testing.T) {
 			browserFixtureEnvelope(w, 200, map[string]bool{"cancelled": true})
 			return
 		}
-		if r.URL.Path != "/v1/login/bounded" {
+		if r.URL.Path != "/v1/login/x-interactive" {
 			t.Error("unexpected login route")
 		}
 		calls++
@@ -114,6 +114,9 @@ func TestBrowserLoginHarvestAffinityAndNoCredentials(t *testing.T) {
 			browserFixtureCapabilities(w)
 			return
 		}
+		if r.URL.Path != "/v1/login/x-interactive" {
+			t.Error("unexpected harvest route")
+		}
 		var req map[string]json.RawMessage
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		for _, key := range []string{"username", "password", "totp_secret", "verification_code", "challenge_id"} {
@@ -134,6 +137,26 @@ func TestBrowserLoginHarvestAffinityAndNoCredentials(t *testing.T) {
 	result, err := login.Harvest(context.Background(), o)
 	if err != nil || result.Session.Proxy != o.ProxyURL || result.Session.UserAgent != "fixture-UA" {
 		t.Fatalf("affinity: %v %v", result, err)
+	}
+}
+
+func TestBrowserLoginMissingInteractiveRouteDoesNotFallback(t *testing.T) {
+	posts := 0
+	login := newBrowserFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/capabilities" {
+			browserFixtureCapabilities(w)
+			return
+		}
+		posts++
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/login/x-interactive" {
+			t.Errorf("unexpected fallback: %s %s", r.Method, r.URL.Path)
+		}
+		browserFixtureError(w, http.StatusNotFound, "not_found")
+	})
+	result, err := login.Start(context.Background(), BrowserLoginRequest{Username: "user", Password: "password", Operation: browserFixtureOperation()})
+	var typed *BrowserLoginError
+	if result != nil || !errors.As(err, &typed) || typed.StatusCode != http.StatusNotFound || posts != 1 {
+		t.Fatalf("missing interactive route: result=%v error=%v posts=%d", result, err, posts)
 	}
 }
 

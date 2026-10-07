@@ -1,7 +1,7 @@
 package x
 
-// This adapter follows social-login v0.2.20's bounded v1 wire contract, with
-// interactive_x capability negotiation for retained-browser X continuation.
+// This adapter follows social-login v0.2.22's interactive X v1 wire contract,
+// with capability negotiation for retained-browser continuation and aggregate work.
 // It intentionally has no dependency on the private social-login Go module.
 
 import (
@@ -309,7 +309,7 @@ func (b *BrowserLogin) login(ctx context.Context, o BrowserLoginOperation, usern
 		return nil, browserError("service", http.StatusServiceUnavailable, 0)
 	}
 	var out browserResultWire
-	status, err := b.do(ctx, http.MethodPost, "/v1/login/bounded", browserRequest{o, "x", username, password, id, code}, &out)
+	status, err := b.do(ctx, http.MethodPost, "/v1/login/x-interactive", browserRequest{o, "x", username, password, id, code}, &out)
 	if !out.validAttempts(aggregateBudget) || out.DeadlineAt.IsZero() || out.DeadlineAt.After(deadline) {
 		// A transport/API failure may report no work metadata. Preserve its
 		// classification and return no result: callers must account unknown
