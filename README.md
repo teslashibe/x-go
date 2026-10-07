@@ -49,10 +49,13 @@ Prefer an existing `Session.NewClient` first. A rate limit, challenge, transport
 failure or provider outage does not establish that saved credentials expired.
 Use `errors.Is` to distinguish those failures from `ErrUnauthorized`.
 
-`BrowserLogin` explicitly uses the standalone social-login bounded v1 protocol.
-Its wire contract follows v0.2.20 and requires `interactive_x: 1` in
-`/v1/capabilities`, which identifies support for retained-browser X challenges.
-An older runtime fails before password submission. `Login` with `SidecarURL`
+`BrowserLogin` uses `/v1/login/x-interactive` on social-login v0.2.22 or a
+compatible runtime. It requires `interactive_x: 1` in `/v1/capabilities` for
+retained-browser X challenges and aggregate attempt evidence. Missing capability
+support stops login before submission; a missing interactive route fails without
+falling back to `/v1/login/bounded` or `/login`. Deploy the compatible runtime
+before upgrading x-go, including installations using the Scarlett Node sidecar.
+`Login` with `SidecarURL`
 remains the separate legacy `/login` API and cannot resume interactive challenges.
 There is no automatic protocol or credential retry.
 
