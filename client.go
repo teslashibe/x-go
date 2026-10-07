@@ -527,16 +527,19 @@ func classifyRESTErrorBody(body []byte) error {
 		}
 	}
 	first := envelope.Errors[0]
+	if err := classifyXErrorCode(first.Code); err != nil {
+		return err
+	}
 	msg := strings.ToLower(first.Message)
 	switch {
-	case first.Code == 32 || strings.Contains(msg, "not authenticated"):
+	case strings.Contains(msg, "not authenticated"):
 		return ErrUnauthorized
-	case first.Code == 88 || strings.Contains(msg, "rate limit"):
+	case strings.Contains(msg, "rate limit"):
 		return ErrRateLimited
-	case first.Code == 349 || strings.Contains(msg, "send a direct message"),
+	case strings.Contains(msg, "send a direct message"),
 		strings.Contains(msg, "cannot send"), strings.Contains(msg, "not allowed to send"):
 		return ErrDMClosed
-	case first.Code == 34 || strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not found"):
 		return ErrNotFound
 	default:
 		return nil
@@ -565,30 +568,7 @@ func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
 	}
 
 	if len(envelope.Errors) > 0 {
-		first := envelope.Errors[0]
-		msg := strings.ToLower(first.Message)
-		switch {
-		case strings.Contains(msg, "challenge") ||
-			strings.Contains(msg, "verification required") ||
-			strings.Contains(msg, "verify your identity"):
-			return nil, ErrChallenge
-		case first.Code == 32 || strings.Contains(msg, "not authenticated"):
-			return nil, ErrUnauthorized
-		case first.Code == 63 || strings.Contains(msg, "suspended"):
-			return nil, ErrSuspended
-		case first.Code == 34 || strings.Contains(msg, "not found"):
-			return nil, ErrNotFound
-		case first.Code == 88 || strings.Contains(msg, "rate limit"):
-			return nil, ErrRateLimited
-		case first.Code == 327 || strings.Contains(msg, "already retweeted"):
-			return nil, ErrAlreadyRetweeted
-		case first.Code == 349 || strings.Contains(msg, "send a direct message"):
-			return nil, ErrDMClosed
-		case strings.Contains(msg, "forbidden") || strings.Contains(msg, "not allowed"):
-			return nil, ErrForbidden
-		default:
-			return nil, fmt.Errorf("%w: %s (code %d)", ErrRequestFailed, first.Message, first.Code)
-		}
+		return nil, classifyGQLError(envelope.Errors[0])
 	}
 
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
@@ -596,6 +576,37 @@ func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
 	}
 
 	return envelope.Data, nil
+}
+
+// classifyGQLError maps one GraphQL error to a sentinel. Code cases run
+// before the message-substring cases.
+func classifyGQLError(e gqlError) error {
+	if err := classifyXErrorCode(e.Code); err != nil {
+		return err
+	}
+	msg := strings.ToLower(e.Message)
+	switch {
+	case strings.Contains(msg, "challenge") ||
+		strings.Contains(msg, "verification required") ||
+		strings.Contains(msg, "verify your identity"):
+		return ErrChallenge
+	case strings.Contains(msg, "not authenticated"):
+		return ErrUnauthorized
+	case strings.Contains(msg, "suspended"):
+		return ErrSuspended
+	case strings.Contains(msg, "not found"):
+		return ErrNotFound
+	case strings.Contains(msg, "rate limit"):
+		return ErrRateLimited
+	case strings.Contains(msg, "already retweeted"):
+		return ErrAlreadyRetweeted
+	case strings.Contains(msg, "send a direct message"):
+		return ErrDMClosed
+	case strings.Contains(msg, "forbidden") || strings.Contains(msg, "not allowed"):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("%w: %s (code %d)", ErrRequestFailed, e.Message, e.Code)
+	}
 }
 
 // parseRetryAfter parses rate-limit headers. Handles three formats:

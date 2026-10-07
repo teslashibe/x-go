@@ -70,6 +70,13 @@ type Tweet struct {
 	MentionedUsers   []string          `json:"mentionedUsers,omitempty"`
 	URLs             []string          `json:"urls,omitempty"`
 	Raw              *RawTweetEnvelope `json:"raw,omitempty"`
+
+	// ViewCountKnown reports that X returned a numeric views.count; ViewCount
+	// stays 0 when it did not.
+	ViewCountKnown bool `json:"viewCountKnown"`
+	// AuthorFollowersCount is the author's followers_count embedded in the
+	// post, or nil when X omitted it.
+	AuthorFollowersCount *int `json:"authorFollowersCount,omitempty"`
 }
 
 // TweetPage is one page of tweets with a cursor for the next page.

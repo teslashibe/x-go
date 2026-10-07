@@ -203,7 +203,7 @@ type userLegacy struct {
 	Description          string        `json:"description"`
 	Location             string        `json:"location"`
 	URL                  string        `json:"url"`
-	FollowersCount       int           `json:"followers_count"`
+	FollowersCount       *int          `json:"followers_count"`
 	FriendsCount         int           `json:"friends_count"`
 	StatusesCount        int           `json:"statuses_count"`
 	ListedCount          int           `json:"listed_count"`
@@ -234,13 +234,16 @@ func toUser(o userObj) User {
 		Location:        o.Legacy.Location,
 		ProfileImageURL: o.Legacy.ProfileImageURLHTTPS,
 		BannerURL:       o.Legacy.ProfileBannerURL,
-		FollowersCount:  o.Legacy.FollowersCount,
 		FollowingCount:  o.Legacy.FriendsCount,
 		TweetCount:      o.Legacy.StatusesCount,
 		ListedCount:     o.Legacy.ListedCount,
 		Verified:        o.Legacy.Verified,
 		IsBlueVerified:  o.IsBlueVerified,
 		PinnedTweetIDs:  o.Legacy.PinnedTweetIDsStr,
+	}
+
+	if o.Legacy.FollowersCount != nil {
+		u.FollowersCount = *o.Legacy.FollowersCount
 	}
 
 	// X has moved core profile fields out of legacy into top-level objects.
@@ -328,6 +331,7 @@ func toTweet(o tweetObj) Tweet {
 	if o.Views.Count != "" {
 		if v, err := strconv.Atoi(o.Views.Count); err == nil {
 			t.ViewCount = v
+			t.ViewCountKnown = true
 		}
 	}
 
@@ -342,6 +346,10 @@ func toTweet(o tweetObj) Tweet {
 	t.AuthorID = author.ID
 	t.AuthorScreenName = author.ScreenName
 	t.AuthorName = author.Name
+	if n := o.Core.UserResults.Result.Legacy.FollowersCount; n != nil {
+		followers := *n
+		t.AuthorFollowersCount = &followers
+	}
 
 	for _, h := range o.Legacy.Entities.Hashtags {
 		t.Hashtags = append(t.Hashtags, h.Text)

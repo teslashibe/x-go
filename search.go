@@ -2,6 +2,7 @@ package x
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -258,7 +259,7 @@ func (c *Client) AdvancedSearchTweetsPage(ctx context.Context, search *AdvancedS
 		return TweetPage{}, err
 	}
 
-	return parseTweetPage(raw, "search_by_raw_query.search_timeline")
+	return parseSearchData(raw)
 }
 
 // SearchTweets returns the first page of tweet search results.
@@ -301,7 +302,7 @@ func (c *Client) SearchTweetsPage(ctx context.Context, query string, count int, 
 		return TweetPage{}, err
 	}
 
-	return parseTweetPage(raw, "search_by_raw_query.search_timeline")
+	return parseSearchData(raw)
 }
 
 // SearchUsers returns the first page of user search results.
@@ -338,6 +339,11 @@ func (c *Client) SearchUsersPage(ctx context.Context, query string, count int, c
 	}
 
 	return parseUserPage(raw, "search_by_raw_query.search_timeline")
+}
+
+// parseSearchData parses the data object of a SearchTimeline response.
+func parseSearchData(data json.RawMessage) (TweetPage, error) {
+	return parseTweetPage(data, "search_by_raw_query.search_timeline")
 }
 
 func buildSearchQuery(query string, so *searchOptions) string {

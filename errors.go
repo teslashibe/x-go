@@ -21,9 +21,14 @@ var (
 	ErrTweetTooLong      = errors.New("x: tweet text exceeds account character limit")
 	ErrDMClosed          = errors.New("x: recipient has DMs closed")
 	ErrChallenge         = errors.New("x: additional verification required")
+	ErrDuplicatePost     = errors.New("x: post duplicates a recent post")
+	ErrAutomatedRequest  = errors.New("x: request was flagged as automated")
+	ErrReplyRestricted   = errors.New("x: replies to this post are restricted or it is not visible")
+	ErrDailyPostLimit    = errors.New("x: account reached its daily post limit")
 	ErrDefinite          = errors.New("x: request definitely did not complete")
 	ErrAmbiguous         = errors.New("x: request outcome is ambiguous")
 	errWriteNotAttempted = errors.New("x: write was not attempted")
+	errMissingAck        = errors.New("x: write response carried no post ID")
 
 	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
 	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
@@ -77,9 +82,47 @@ func classifyWriteOutcome(err error) error {
 		errors.Is(err, ErrChallenge) ||
 		errors.Is(err, ErrDMClosed) ||
 		errors.Is(err, ErrTweetTooLong) ||
+		errors.Is(err, ErrDuplicatePost) ||
+		errors.Is(err, ErrAutomatedRequest) ||
+		errors.Is(err, ErrReplyRestricted) ||
+		errors.Is(err, ErrDailyPostLimit) ||
 		errors.Is(err, ErrQueryIDStale) ||
 		errors.Is(err, errWriteNotAttempted) {
 		outcome = ErrDefinite
 	}
 	return &OutcomeError{Outcome: outcome, Err: err}
+}
+
+// classifyXErrorCode maps X's numeric error codes, shared by GraphQL and REST
+// error bodies, to sentinels. It returns nil for codes without a mapping so
+// callers can fall back to message matching.
+func classifyXErrorCode(code int) error {
+	switch code {
+	case 32:
+		return ErrUnauthorized
+	case 34, 144:
+		return ErrNotFound
+	case 63:
+		return ErrSuspended
+	case 88:
+		return ErrRateLimited
+	case 185, 344:
+		return ErrDailyPostLimit
+	case 186:
+		return ErrTweetTooLong
+	case 187:
+		return ErrDuplicatePost
+	case 226:
+		return ErrAutomatedRequest
+	case 326:
+		return ErrChallenge
+	case 327:
+		return ErrAlreadyRetweeted
+	case 349:
+		return ErrDMClosed
+	case 385, 433:
+		return ErrReplyRestricted
+	default:
+		return nil
+	}
 }

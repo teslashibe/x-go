@@ -24,16 +24,22 @@ func (c *Client) GetTweet(ctx context.Context, tweetID string) (*Tweet, error) {
 		return nil, err
 	}
 
-	var data struct {
+	return parseTweetResultData(raw)
+}
+
+// parseTweetResultData parses the data object of a TweetResultByRestId
+// response. Tombstones, unavailable posts and empty results are ErrNotFound.
+func parseTweetResultData(data json.RawMessage) (*Tweet, error) {
+	var payload struct {
 		TweetResult struct {
 			Result json.RawMessage `json:"result"`
 		} `json:"tweetResult"`
 	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decoding tweet: %v", ErrRequestFailed, err)
 	}
 
-	t, ok, err := (tweetResult{Result: data.TweetResult.Result}).tweet()
+	t, ok, err := (tweetResult{Result: payload.TweetResult.Result}).tweet()
 	if err != nil {
 		return nil, err
 	}
@@ -65,17 +71,26 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 		return nil, err
 	}
 
-	var data struct {
+	return parseTweetDetailData(raw, tweetID)
+}
+
+// parseTweetDetailData parses the data object of a TweetDetail response for
+// tweetID. A missing conversation or focal tweet is ErrNotFound.
+func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, error) {
+	var payload struct {
 		ThreadedConversation json.RawMessage `json:"threaded_conversation_with_injections_v2"`
 	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decoding tweet detail: %v", ErrRequestFailed, err)
+	}
+	if len(payload.ThreadedConversation) == 0 || string(payload.ThreadedConversation) == "null" {
+		return nil, ErrNotFound
 	}
 
 	var tl struct {
 		Instructions []timelineInstruction `json:"instructions"`
 	}
-	if err := json.Unmarshal(data.ThreadedConversation, &tl); err != nil {
+	if err := json.Unmarshal(payload.ThreadedConversation, &tl); err != nil {
 		return nil, fmt.Errorf("%w: decoding conversation: %v", ErrRequestFailed, err)
 	}
 

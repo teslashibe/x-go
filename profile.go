@@ -13,8 +13,8 @@ func (c *Client) GetProfile(ctx context.Context, screenName string) (*User, erro
 	}
 
 	vars := map[string]interface{}{
-		"screen_name":                    screenName,
-		"withSafetyModeUserFields":       true,
+		"screen_name":              screenName,
+		"withSafetyModeUserFields": true,
 	}
 
 	raw, err := c.graphqlGET(ctx, "UserByScreenName", vars)
@@ -22,24 +22,7 @@ func (c *Client) GetProfile(ctx context.Context, screenName string) (*User, erro
 		return nil, err
 	}
 
-	var data struct {
-		User struct {
-			Result userObj `json:"result"`
-		} `json:"user"`
-	}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return nil, fmt.Errorf("%w: decoding profile: %v", ErrRequestFailed, err)
-	}
-
-	if data.User.Result.Typename == "UserUnavailable" {
-		return nil, ErrSuspended
-	}
-	if data.User.Result.RestID == "" {
-		return nil, ErrNotFound
-	}
-
-	u := toUser(data.User.Result)
-	return &u, nil
+	return parseUserData(raw)
 }
 
 // GetProfileByID retrieves a user's profile by their numeric REST ID.
@@ -49,8 +32,8 @@ func (c *Client) GetProfileByID(ctx context.Context, userID string) (*User, erro
 	}
 
 	vars := map[string]interface{}{
-		"userId":                         userID,
-		"withSafetyModeUserFields":       true,
+		"userId":                   userID,
+		"withSafetyModeUserFields": true,
 	}
 
 	raw, err := c.graphqlGET(ctx, "UserByRestId", vars)
@@ -58,22 +41,28 @@ func (c *Client) GetProfileByID(ctx context.Context, userID string) (*User, erro
 		return nil, err
 	}
 
-	var data struct {
+	return parseUserData(raw)
+}
+
+// parseUserData parses the data object of a UserByScreenName or UserByRestId
+// response. UserUnavailable is ErrSuspended; a missing user is ErrNotFound.
+func parseUserData(data json.RawMessage) (*User, error) {
+	var payload struct {
 		User struct {
 			Result userObj `json:"result"`
 		} `json:"user"`
 	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decoding profile: %v", ErrRequestFailed, err)
 	}
 
-	if data.User.Result.Typename == "UserUnavailable" {
+	if payload.User.Result.Typename == "UserUnavailable" {
 		return nil, ErrSuspended
 	}
-	if data.User.Result.RestID == "" {
+	if payload.User.Result.RestID == "" {
 		return nil, ErrNotFound
 	}
 
-	u := toUser(data.User.Result)
+	u := toUser(payload.User.Result)
 	return &u, nil
 }
