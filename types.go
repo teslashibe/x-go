@@ -93,9 +93,14 @@ type UserPage struct {
 	HasNext    bool   `json:"hasNext"`
 }
 
-// TweetDetail holds a tweet together with its conversation replies.
+// TweetDetail holds a tweet with the parent chain and replies X returned.
 type TweetDetail struct {
-	Tweet   Tweet   `json:"tweet"`
+	Tweet Tweet `json:"tweet"`
+	// Ancestors is the focal post's parent chain as X returned it (root
+	// first), when the focal post is itself a reply.
+	Ancestors []Tweet `json:"ancestors,omitempty"`
+	// Replies holds the posts X returned after the focal post: replies and
+	// replies to them.
 	Replies []Tweet `json:"replies,omitempty"`
 }
 

@@ -75,7 +75,8 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 }
 
 // parseTweetDetailData parses the data object of a TweetDetail response for
-// tweetID. A missing conversation or focal tweet is ErrNotFound.
+// tweetID. Posts before the focal post are its ancestors; posts after it are
+// replies. A missing conversation or focal tweet is ErrNotFound.
 func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, error) {
 	var payload struct {
 		ThreadedConversation json.RawMessage `json:"threaded_conversation_with_injections_v2"`
@@ -94,7 +95,24 @@ func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, e
 		return nil, fmt.Errorf("%w: decoding conversation: %v", ErrRequestFailed, err)
 	}
 
+	// Entries arrive in conversation order: the focal post's parent chain
+	// (when it is a reply), the focal post, then replies.
 	detail := &TweetDetail{}
+	focalSeen := false
+	add := func(tw Tweet) {
+		switch {
+		case tw.ID == "":
+		case tw.ID == tweetID:
+			if !focalSeen {
+				detail.Tweet = tw
+				focalSeen = true
+			}
+		case focalSeen:
+			detail.Replies = append(detail.Replies, tw)
+		default:
+			detail.Ancestors = append(detail.Ancestors, tw)
+		}
+	}
 	for _, inst := range tl.Instructions {
 		for _, entry := range inst.Entries {
 			tweet, ok, err := extractTweetFromEntry(entry)
@@ -102,11 +120,7 @@ func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, e
 				return nil, err
 			}
 			if ok && tweet.ID != "" {
-				if tweet.ID == tweetID {
-					detail.Tweet = tweet
-				} else {
-					detail.Replies = append(detail.Replies, tweet)
-				}
+				add(tweet)
 				continue
 			}
 			for _, item := range entry.Content.Items {
@@ -115,13 +129,8 @@ func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, e
 					if err != nil {
 						return nil, err
 					}
-					if !ok {
-						continue
-					}
-					if tw.ID == tweetID {
-						detail.Tweet = tw
-					} else if tw.ID != "" {
-						detail.Replies = append(detail.Replies, tw)
+					if ok {
+						add(tw)
 					}
 				}
 			}
