@@ -63,14 +63,25 @@ func (c *Client) graphqlGET(ctx context.Context, operationName string, variables
 	return nil, lastErr
 }
 
-// graphqlPOST executes an authenticated GraphQL POST request with retries.
+// graphqlPOST executes an authenticated GraphQL POST request. Any GraphQL
+// error in the response fails the call.
 func (c *Client) graphqlPOST(ctx context.Context, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
+	body, envelope, err := c.graphqlPOSTEnvelope(ctx, operationName, variables)
+	if err != nil {
+		return nil, err
+	}
+	return writeGQLData(body, envelope)
+}
+
+// graphqlPOSTEnvelope sends one GraphQL POST and returns the decoded envelope
+// with its errors unapplied, for callers that must read data next to errors.
+func (c *Client) graphqlPOSTEnvelope(ctx context.Context, operationName string, variables map[string]interface{}) ([]byte, gqlResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, errors.Join(errWriteNotAttempted, err)
+		return nil, gqlResponse{}, errors.Join(errWriteNotAttempted, err)
 	}
 	qid := c.queryID(operationName)
 	if qid == "" {
-		return nil, fmt.Errorf("%w: no queryId registered for %q", ErrInvalidParams, operationName)
+		return nil, gqlResponse{}, fmt.Errorf("%w: no queryId registered for %q", ErrInvalidParams, operationName)
 	}
 
 	// Writes are never retried: after a transport failure the server outcome is
@@ -122,7 +133,11 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
 
-	data, parseErr := c.parseGQLResponse(body)
+	envelope, parseErr := decodeGQLResponse(body)
+	var data json.RawMessage
+	if parseErr == nil {
+		data, parseErr = readGQLData(body, envelope)
+	}
 	if errors.Is(parseErr, ErrRateLimited) {
 		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 0)
 		if wait == 0 {
@@ -149,11 +164,12 @@ func (c *Client) operationError(operation string, req *http.Request, resp *http.
 	}
 }
 
-// doGraphQLPOST performs a single GraphQL POST request.
-func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, variables map[string]interface{}) (json.RawMessage, error) {
+// doGraphQLPOST performs a single GraphQL POST request and decodes the
+// envelope without applying its errors.
+func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, variables map[string]interface{}) ([]byte, gqlResponse, error) {
 	c.waitForGap(ctx)
 	if ctx.Err() != nil {
-		return nil, errors.Join(errWriteNotAttempted, ctx.Err())
+		return nil, gqlResponse{}, errors.Join(errWriteNotAttempted, ctx.Err())
 	}
 
 	endpoint := fmt.Sprintf("%s/%s/%s", graphqlBase, qid, operationName)
@@ -165,32 +181,33 @@ func (c *Client) doGraphQLPOST(ctx context.Context, qid, operationName string, v
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshalling body: %v", ErrRequestFailed, err)
+		return nil, gqlResponse{}, fmt.Errorf("%w: marshalling body: %v", ErrRequestFailed, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err)
+		return nil, gqlResponse{}, fmt.Errorf("%w: building request: %v", ErrRequestFailed, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrRequestFailed, err)
+		return nil, gqlResponse{}, fmt.Errorf("%w: %v", ErrRequestFailed, err)
 	}
 	defer resp.Body.Close()
 
 	if err := c.checkStatus(resp); err != nil {
-		return nil, err
+		return nil, gqlResponse{}, err
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
+		return nil, gqlResponse{}, fmt.Errorf("%w: reading body: %v", ErrRequestFailed, err)
 	}
 
-	return c.parseGQLResponse(body)
+	envelope, err := decodeGQLResponse(body)
+	return body, envelope, err
 }
 
 // restGET performs an authenticated REST API GET request.
@@ -527,16 +544,19 @@ func classifyRESTErrorBody(body []byte) error {
 		}
 	}
 	first := envelope.Errors[0]
+	if err := classifyXErrorCode(first.Code); err != nil {
+		return err
+	}
 	msg := strings.ToLower(first.Message)
 	switch {
-	case first.Code == 32 || strings.Contains(msg, "not authenticated"):
+	case strings.Contains(msg, "not authenticated"):
 		return ErrUnauthorized
-	case first.Code == 88 || strings.Contains(msg, "rate limit"):
+	case strings.Contains(msg, "rate limit"):
 		return ErrRateLimited
-	case first.Code == 349 || strings.Contains(msg, "send a direct message"),
+	case strings.Contains(msg, "send a direct message"),
 		strings.Contains(msg, "cannot send"), strings.Contains(msg, "not allowed to send"):
 		return ErrDMClosed
-	case first.Code == 34 || strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not found"):
 		return ErrNotFound
 	default:
 		return nil
@@ -557,45 +577,115 @@ func (e *RateLimitError) Unwrap() error {
 	return ErrRateLimited
 }
 
-// parseGQLResponse extracts the data field from a GraphQL response.
-func (c *Client) parseGQLResponse(body []byte) (json.RawMessage, error) {
+// decodeGQLResponse decodes a GraphQL envelope; malformed JSON is
+// ErrRequestFailed.
+func decodeGQLResponse(body []byte) (gqlResponse, error) {
 	var envelope gqlResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("%w: decoding response: %v (snippet: %s)", ErrRequestFailed, err, truncate(string(body), 300))
+		return gqlResponse{}, fmt.Errorf("%w: decoding response: %v (snippet: %s)", ErrRequestFailed, err, truncate(string(body), 300))
 	}
+	return envelope, nil
+}
 
+// writeGQLData applies the write rule: any GraphQL error fails the call.
+func writeGQLData(body []byte, envelope gqlResponse) (json.RawMessage, error) {
 	if len(envelope.Errors) > 0 {
-		first := envelope.Errors[0]
-		msg := strings.ToLower(first.Message)
-		switch {
-		case strings.Contains(msg, "challenge") ||
-			strings.Contains(msg, "verification required") ||
-			strings.Contains(msg, "verify your identity"):
-			return nil, ErrChallenge
-		case first.Code == 32 || strings.Contains(msg, "not authenticated"):
-			return nil, ErrUnauthorized
-		case first.Code == 63 || strings.Contains(msg, "suspended"):
-			return nil, ErrSuspended
-		case first.Code == 34 || strings.Contains(msg, "not found"):
-			return nil, ErrNotFound
-		case first.Code == 88 || strings.Contains(msg, "rate limit"):
-			return nil, ErrRateLimited
-		case first.Code == 327 || strings.Contains(msg, "already retweeted"):
-			return nil, ErrAlreadyRetweeted
-		case first.Code == 349 || strings.Contains(msg, "send a direct message"):
-			return nil, ErrDMClosed
-		case strings.Contains(msg, "forbidden") || strings.Contains(msg, "not allowed"):
-			return nil, ErrForbidden
-		default:
-			return nil, fmt.Errorf("%w: %s (code %d)", ErrRequestFailed, first.Message, first.Code)
-		}
+		return nil, classifyGQLError(envelope.Errors[0])
 	}
-
-	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+	if !presentJSON(envelope.Data) {
 		return nil, fmt.Errorf("%w: no data in response (snippet: %s)", ErrRequestFailed, truncate(string(body), 300))
 	}
-
 	return envelope.Data, nil
+}
+
+// readGQLData applies the read rule. When data holds a usable value and every
+// error is partial (kind NonFatal, or a path below the root field, such as an
+// unavailable quoted post), the data is returned and the errors are dropped.
+// Any other error fails the call, mapped to a sentinel.
+func readGQLData(body []byte, envelope gqlResponse) (json.RawMessage, error) {
+	if len(envelope.Errors) > 0 {
+		for _, e := range envelope.Errors {
+			if !e.partial() {
+				return nil, classifyGQLError(e)
+			}
+		}
+		if !usableData(envelope.Data, "") {
+			return nil, classifyGQLError(envelope.Errors[0])
+		}
+	}
+	if !presentJSON(envelope.Data) {
+		return nil, fmt.Errorf("%w: no data in response (snippet: %s)", ErrRequestFailed, truncate(string(body), 300))
+	}
+	return envelope.Data, nil
+}
+
+// usableData reports whether data is an object whose root field (any field
+// when root is empty) holds something other than null, {} or [].
+func usableData(data json.RawMessage, root string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return false
+	}
+	for name, value := range fields {
+		if (root == "" || name == root) && nonEmptyJSON(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// presentJSON reports whether v is present and not null.
+func presentJSON(v json.RawMessage) bool {
+	v = bytes.TrimSpace(v)
+	return len(v) > 0 && string(v) != "null"
+}
+
+// nonEmptyJSON reports whether v is present and not null, {} or [].
+func nonEmptyJSON(v json.RawMessage) bool {
+	if !presentJSON(v) {
+		return false
+	}
+	v = bytes.TrimSpace(v)
+	switch v[0] {
+	case '{':
+		var m map[string]json.RawMessage
+		return json.Unmarshal(v, &m) != nil || len(m) > 0
+	case '[':
+		var a []json.RawMessage
+		return json.Unmarshal(v, &a) != nil || len(a) > 0
+	}
+	return true
+}
+
+// classifyGQLError maps one GraphQL error to a sentinel. Code cases run
+// before the message-substring cases.
+func classifyGQLError(e gqlError) error {
+	if err := classifyXErrorCode(e.code()); err != nil {
+		return err
+	}
+	msg := strings.ToLower(e.Message)
+	switch {
+	case strings.Contains(msg, "challenge") ||
+		strings.Contains(msg, "verification required") ||
+		strings.Contains(msg, "verify your identity"):
+		return ErrChallenge
+	case strings.Contains(msg, "not authenticated"):
+		return ErrUnauthorized
+	case strings.Contains(msg, "suspended"):
+		return ErrSuspended
+	case strings.Contains(msg, "not found"):
+		return ErrNotFound
+	case strings.Contains(msg, "rate limit"):
+		return ErrRateLimited
+	case strings.Contains(msg, "already retweeted"):
+		return ErrAlreadyRetweeted
+	case strings.Contains(msg, "send a direct message"):
+		return ErrDMClosed
+	case strings.Contains(msg, "forbidden") || strings.Contains(msg, "not allowed"):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("%w: %s (code %d)", ErrRequestFailed, e.Message, e.code())
+	}
 }
 
 // parseRetryAfter parses rate-limit headers. Handles three formats:
@@ -625,7 +715,9 @@ func parseRetryAfter(val string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// isNonRetriable reports whether err should not be retried.
+// isNonRetriable reports whether err should not be retried. X enforcement and
+// content rejections (226, 185/344, 187, 385/433, 186, 327, 349, media codes)
+// are final: repeating the request only hits X again on a flagged account.
 func isNonRetriable(err error) bool {
 	return errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrUnauthorized) ||
@@ -634,7 +726,16 @@ func isNonRetriable(err error) bool {
 		errors.Is(err, ErrSuspended) ||
 		errors.Is(err, ErrInvalidParams) ||
 		errors.Is(err, ErrQueryIDStale) ||
-		errors.Is(err, ErrChallenge)
+		errors.Is(err, ErrChallenge) ||
+		errors.Is(err, ErrAutomatedRequest) ||
+		errors.Is(err, ErrDailyPostLimit) ||
+		errors.Is(err, ErrPostingLimited) ||
+		errors.Is(err, ErrDuplicatePost) ||
+		errors.Is(err, ErrReplyRestricted) ||
+		errors.Is(err, ErrTweetTooLong) ||
+		errors.Is(err, ErrAlreadyRetweeted) ||
+		errors.Is(err, ErrDMClosed) ||
+		errors.Is(err, ErrMediaRejected)
 }
 
 func truncate(s string, n int) string {

@@ -22,6 +22,31 @@ type gqlResponse struct {
 type gqlError struct {
 	Message string `json:"message"`
 	Code    int    `json:"code"`
+	// Kind is X's error kind ("NonFatal", "Permissions", "Validation", …).
+	Kind string `json:"kind"`
+	// Path is the GraphQL path the error belongs to; a path longer than the
+	// root field points inside the data (for example an unavailable quoted
+	// post), not at the operation itself.
+	Path       []json.RawMessage `json:"path"`
+	Extensions struct {
+		Code int    `json:"code"`
+		Kind string `json:"kind"`
+	} `json:"extensions"`
+}
+
+// code returns X's numeric error code, from extensions when the top level
+// omits it.
+func (e gqlError) code() int {
+	if e.Code != 0 {
+		return e.Code
+	}
+	return e.Extensions.Code
+}
+
+// partial reports whether the error concerns part of the data (kind NonFatal,
+// or a path below the root field) rather than the operation as a whole.
+func (e gqlError) partial() bool {
+	return strings.EqualFold(e.Kind, "NonFatal") || strings.EqualFold(e.Extensions.Kind, "NonFatal") || len(e.Path) > 1
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +228,7 @@ type userLegacy struct {
 	Description          string        `json:"description"`
 	Location             string        `json:"location"`
 	URL                  string        `json:"url"`
-	FollowersCount       int           `json:"followers_count"`
+	FollowersCount       *int          `json:"followers_count"`
 	FriendsCount         int           `json:"friends_count"`
 	StatusesCount        int           `json:"statuses_count"`
 	ListedCount          int           `json:"listed_count"`
@@ -234,13 +259,16 @@ func toUser(o userObj) User {
 		Location:        o.Legacy.Location,
 		ProfileImageURL: o.Legacy.ProfileImageURLHTTPS,
 		BannerURL:       o.Legacy.ProfileBannerURL,
-		FollowersCount:  o.Legacy.FollowersCount,
 		FollowingCount:  o.Legacy.FriendsCount,
 		TweetCount:      o.Legacy.StatusesCount,
 		ListedCount:     o.Legacy.ListedCount,
 		Verified:        o.Legacy.Verified,
 		IsBlueVerified:  o.IsBlueVerified,
 		PinnedTweetIDs:  o.Legacy.PinnedTweetIDsStr,
+	}
+
+	if o.Legacy.FollowersCount != nil {
+		u.FollowersCount = *o.Legacy.FollowersCount
 	}
 
 	// X has moved core profile fields out of legacy into top-level objects.
@@ -328,6 +356,7 @@ func toTweet(o tweetObj) Tweet {
 	if o.Views.Count != "" {
 		if v, err := strconv.Atoi(o.Views.Count); err == nil {
 			t.ViewCount = v
+			t.ViewCountKnown = true
 		}
 	}
 
@@ -342,6 +371,10 @@ func toTweet(o tweetObj) Tweet {
 	t.AuthorID = author.ID
 	t.AuthorScreenName = author.ScreenName
 	t.AuthorName = author.Name
+	if n := o.Core.UserResults.Result.Legacy.FollowersCount; n != nil {
+		followers := *n
+		t.AuthorFollowersCount = &followers
+	}
 
 	for _, h := range o.Legacy.Entities.Hashtags {
 		t.Hashtags = append(t.Hashtags, h.Text)

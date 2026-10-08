@@ -26,7 +26,7 @@ func tweetOptions(mediaIDs []string, possiblySensitive bool) []x.TweetOption {
 }
 
 func createTweet(ctx context.Context, c *x.Client, in CreateTweetInput) (any, error) {
-	tw, err := c.CreateTweet(ctx, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
+	tw, err := c.CreatePost(ctx, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ type QuoteTweetInput struct {
 }
 
 func quoteTweet(ctx context.Context, c *x.Client, in QuoteTweetInput) (any, error) {
-	tw, err := c.QuoteTweet(ctx, in.QuotedTweetURL, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
+	tw, err := c.QuotePost(ctx, in.QuotedTweetURL, in.Text, tweetOptions(in.MediaIDs, in.PossiblySensitive)...)
 	if err != nil {
 		return nil, err
 	}

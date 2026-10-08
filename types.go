@@ -70,6 +70,13 @@ type Tweet struct {
 	MentionedUsers   []string          `json:"mentionedUsers,omitempty"`
 	URLs             []string          `json:"urls,omitempty"`
 	Raw              *RawTweetEnvelope `json:"raw,omitempty"`
+
+	// ViewCountKnown reports that X returned a numeric views.count; ViewCount
+	// stays 0 when it did not.
+	ViewCountKnown bool `json:"viewCountKnown"`
+	// AuthorFollowersCount is the author's followers_count embedded in the
+	// post, or nil when X omitted it.
+	AuthorFollowersCount *int `json:"authorFollowersCount,omitempty"`
 }
 
 // TweetPage is one page of tweets with a cursor for the next page.
@@ -86,9 +93,14 @@ type UserPage struct {
 	HasNext    bool   `json:"hasNext"`
 }
 
-// TweetDetail holds a tweet together with its conversation replies.
+// TweetDetail holds a tweet with the parent chain and replies X returned.
 type TweetDetail struct {
-	Tweet   Tweet   `json:"tweet"`
+	Tweet Tweet `json:"tweet"`
+	// Ancestors is the focal post's parent chain as X returned it (root
+	// first), when the focal post is itself a reply.
+	Ancestors []Tweet `json:"ancestors,omitempty"`
+	// Replies holds the posts X returned after the focal post: replies and
+	// replies to them.
 	Replies []Tweet `json:"replies,omitempty"`
 }
 

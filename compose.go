@@ -94,12 +94,7 @@ func (c *Client) CreateTweet(ctx context.Context, text string, opts ...TweetOpti
 
 	o := applyTweetOpts(opts)
 	vars := baseComposeVars(text, o)
-	data, err := c.graphqlPOST(ctx, composeOp(text), vars)
-	if err != nil {
-		return nil, err
-	}
-
-	return parseTweetFromCreateResponse(data)
+	return c.compose(ctx, text, vars)
 }
 
 // Reply publishes a reply to an existing tweet. Long replies use CreateNoteTweet.
@@ -118,11 +113,7 @@ func (c *Client) Reply(ctx context.Context, inReplyToID, text string, opts ...Tw
 		"exclude_reply_user_ids": []string{},
 	}
 
-	data, err := c.graphqlPOST(ctx, composeOp(text), vars)
-	if err != nil {
-		return nil, err
-	}
-	return parseTweetFromCreateResponse(data)
+	return c.compose(ctx, text, vars)
 }
 
 // QuoteTweet publishes a quote tweet. Long quotes use CreateNoteTweet.
@@ -138,11 +129,7 @@ func (c *Client) QuoteTweet(ctx context.Context, quotedTweetURL, text string, op
 	vars := baseComposeVars(text, o)
 	vars["attachment_url"] = quotedTweetURL
 
-	data, err := c.graphqlPOST(ctx, composeOp(text), vars)
-	if err != nil {
-		return nil, err
-	}
-	return parseTweetFromCreateResponse(data)
+	return c.compose(ctx, text, vars)
 }
 
 // DeleteTweet deletes a tweet owned by the authenticated user.
@@ -158,35 +145,88 @@ func (c *Client) DeleteTweet(ctx context.Context, tweetID string) error {
 	return err
 }
 
+// compose sends one CreateTweet or CreateNoteTweet mutation.
+func (c *Client) compose(ctx context.Context, text string, vars map[string]interface{}) (*Tweet, error) {
+	body, envelope, err := c.graphqlPOSTEnvelope(ctx, composeOp(text), vars)
+	if err != nil {
+		return nil, err
+	}
+	return createResult(body, envelope)
+}
+
+// createResult reads a compose response. A created post with an ID is a
+// success even when X also returns errors (for example a NonFatal error about
+// an embedded quoted post): the post is live. Errors without a created post
+// map to sentinels as usual. Errors next to a post object that carries no ID
+// leave the outcome unknown, so they are ErrRequestFailed (ambiguous for
+// CreatePost, QuotePost and ReplyToPost) rather than a definite sentinel.
+func createResult(body []byte, envelope gqlResponse) (*Tweet, error) {
+	if len(envelope.Errors) == 0 {
+		data, err := writeGQLData(body, envelope)
+		if err != nil {
+			return nil, err
+		}
+		return parseTweetFromCreateResponse(data)
+	}
+	if !presentJSON(envelope.Data) {
+		return nil, classifyGQLError(envelope.Errors[0])
+	}
+	if tweet, err := parseTweetFromCreateResponse(envelope.Data); err == nil {
+		return tweet, nil
+	}
+	if createdPostObject(envelope.Data) {
+		return nil, fmt.Errorf("%w: post without an ID alongside error code %d", ErrRequestFailed, envelope.Errors[0].code())
+	}
+	return nil, classifyGQLError(envelope.Errors[0])
+}
+
+// createEnvelopeKeys are the mutation roots X has used for compose responses.
+var createEnvelopeKeys = []string{"create_tweet", "notetweet_create", "create_note_tweet"}
+
+// createResultRaw returns tweet_results.result of the first present compose
+// root, or nil when there is none.
+func createResultRaw(data json.RawMessage) (json.RawMessage, bool, error) {
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, false, fmt.Errorf("%w: parsing create tweet response: %v", ErrRequestFailed, err)
+	}
+	for _, key := range createEnvelopeKeys {
+		raw, ok := wrapper[key]
+		if !ok || !presentJSON(raw) {
+			continue
+		}
+		var envelope struct {
+			TweetResults struct {
+				Result json.RawMessage `json:"result"`
+			} `json:"tweet_results"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return nil, true, fmt.Errorf("%w: parsing create tweet result: %v", ErrRequestFailed, err)
+		}
+		return envelope.TweetResults.Result, true, nil
+	}
+	return nil, false, nil
+}
+
+// createdPostObject reports whether data carries a non-empty post object
+// under a compose root.
+func createdPostObject(data json.RawMessage) bool {
+	result, _, err := createResultRaw(data)
+	return err == nil && nonEmptyJSON(result)
+}
+
 // parseTweetFromCreateResponse extracts a Tweet from CreateTweet /
 // CreateNoteTweet mutation responses. X has used create_tweet,
 // notetweet_create, and create_note_tweet envelopes.
 func parseTweetFromCreateResponse(data json.RawMessage) (*Tweet, error) {
-	var wrapper map[string]json.RawMessage
-	if err := json.Unmarshal(data, &wrapper); err != nil {
-		return nil, fmt.Errorf("%w: parsing create tweet response: %v", ErrRequestFailed, err)
+	result, found, err := createResultRaw(data)
+	if err != nil {
+		return nil, err
 	}
-
-	var resultRaw json.RawMessage
-	for _, key := range []string{"create_tweet", "notetweet_create", "create_note_tweet"} {
-		if raw, ok := wrapper[key]; ok && len(raw) > 0 && string(raw) != "null" {
-			resultRaw = raw
-			break
-		}
-	}
-	if resultRaw == nil {
+	if !found {
 		return nil, fmt.Errorf("%w: tweet creation missing result (snippet: %s)", ErrRequestFailed, truncate(string(data), 300))
 	}
-
-	var envelope struct {
-		TweetResults struct {
-			Result json.RawMessage `json:"result"`
-		} `json:"tweet_results"`
-	}
-	if err := json.Unmarshal(resultRaw, &envelope); err != nil {
-		return nil, fmt.Errorf("%w: parsing create tweet result: %v", ErrRequestFailed, err)
-	}
-	tweet, ok, err := (tweetResult{Result: envelope.TweetResults.Result}).tweet()
+	tweet, ok, err := (tweetResult{Result: result}).tweet()
 	if err != nil {
 		return nil, err
 	}

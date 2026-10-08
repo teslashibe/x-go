@@ -24,16 +24,22 @@ func (c *Client) GetTweet(ctx context.Context, tweetID string) (*Tweet, error) {
 		return nil, err
 	}
 
-	var data struct {
+	return parseTweetResultData(raw)
+}
+
+// parseTweetResultData parses the data object of a TweetResultByRestId
+// response. Tombstones, unavailable posts and empty results are ErrNotFound.
+func parseTweetResultData(data json.RawMessage) (*Tweet, error) {
+	var payload struct {
 		TweetResult struct {
 			Result json.RawMessage `json:"result"`
 		} `json:"tweetResult"`
 	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decoding tweet: %v", ErrRequestFailed, err)
 	}
 
-	t, ok, err := (tweetResult{Result: data.TweetResult.Result}).tweet()
+	t, ok, err := (tweetResult{Result: payload.TweetResult.Result}).tweet()
 	if err != nil {
 		return nil, err
 	}
@@ -65,21 +71,48 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 		return nil, err
 	}
 
-	var data struct {
+	return parseTweetDetailData(raw, tweetID)
+}
+
+// parseTweetDetailData parses the data object of a TweetDetail response for
+// tweetID. Posts before the focal post are its ancestors; posts after it are
+// replies. A missing conversation or focal tweet is ErrNotFound.
+func parseTweetDetailData(data json.RawMessage, tweetID string) (*TweetDetail, error) {
+	var payload struct {
 		ThreadedConversation json.RawMessage `json:"threaded_conversation_with_injections_v2"`
 	}
-	if err := json.Unmarshal(raw, &data); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("%w: decoding tweet detail: %v", ErrRequestFailed, err)
+	}
+	if len(payload.ThreadedConversation) == 0 || string(payload.ThreadedConversation) == "null" {
+		return nil, ErrNotFound
 	}
 
 	var tl struct {
 		Instructions []timelineInstruction `json:"instructions"`
 	}
-	if err := json.Unmarshal(data.ThreadedConversation, &tl); err != nil {
+	if err := json.Unmarshal(payload.ThreadedConversation, &tl); err != nil {
 		return nil, fmt.Errorf("%w: decoding conversation: %v", ErrRequestFailed, err)
 	}
 
+	// Entries arrive in conversation order: the focal post's parent chain
+	// (when it is a reply), the focal post, then replies.
 	detail := &TweetDetail{}
+	focalSeen := false
+	add := func(tw Tweet) {
+		switch {
+		case tw.ID == "":
+		case tw.ID == tweetID:
+			if !focalSeen {
+				detail.Tweet = tw
+				focalSeen = true
+			}
+		case focalSeen:
+			detail.Replies = append(detail.Replies, tw)
+		default:
+			detail.Ancestors = append(detail.Ancestors, tw)
+		}
+	}
 	for _, inst := range tl.Instructions {
 		for _, entry := range inst.Entries {
 			tweet, ok, err := extractTweetFromEntry(entry)
@@ -87,11 +120,7 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 				return nil, err
 			}
 			if ok && tweet.ID != "" {
-				if tweet.ID == tweetID {
-					detail.Tweet = tweet
-				} else {
-					detail.Replies = append(detail.Replies, tweet)
-				}
+				add(tweet)
 				continue
 			}
 			for _, item := range entry.Content.Items {
@@ -100,13 +129,8 @@ func (c *Client) GetTweetDetail(ctx context.Context, tweetID string) (*TweetDeta
 					if err != nil {
 						return nil, err
 					}
-					if !ok {
-						continue
-					}
-					if tw.ID == tweetID {
-						detail.Tweet = tw
-					} else if tw.ID != "" {
-						detail.Replies = append(detail.Replies, tw)
+					if ok {
+						add(tw)
 					}
 				}
 			}
