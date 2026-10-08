@@ -188,10 +188,47 @@ Search types: `SearchTop`, `SearchLatest`, `SearchPeople`, `SearchMedia`, `Searc
 
 ```go
 tweet, _ := c.GetTweet(ctx, tweetID)             // single tweet
-detail, _ := c.GetTweetDetail(ctx, tweetID)       // tweet + reply thread
+detail, _ := c.GetTweetDetail(ctx, tweetID)       // tweet, its parent chain, replies
 page, _ := c.UserTweets(ctx, userID, 20)          // user's tweets
 page, _ = c.UserTweetsPage(ctx, userID, 20, cursor)
 ```
+
+`Tweet.ViewCount` is 0 when X returns no view count; `Tweet.ViewCountKnown`
+tells a real zero from a missing count. `Tweet.AuthorFollowersCount` is the
+author's follower count embedded in the post (`nil` when X omits it).
+
+### Parsing raw GraphQL pages
+
+Bodies fetched elsewhere (for example the pages of a Scarlett `x_read` job)
+parse with the same code the client methods use, so both paths build
+identical values:
+
+```go
+page, err := x.ParseSearchTimeline(body)                 // SearchTimeline
+detail, err := x.ParseTweetDetail(body, focalTweetID)    // TweetDetail, first page
+user, err := x.ParseUserByScreenName(body)               // UserByScreenName
+tweet, err := x.ParseTweetResultByRestID(body)           // TweetResultByRestId
+```
+
+Each parser takes the whole body (`{"data":…,"errors":…}`). When `data` holds
+the operation's root field (`search_by_raw_query`,
+`threaded_conversation_with_injections_v2`, `user`, `tweetResult`) with a value
+other than `null`, `{}` or `[]`, it is parsed and `errors` is ignored, because
+a page can report posts that are unavailable while its data is usable.
+Otherwise the first error maps to the same sentinels as the client, so
+`{"data":{},"errors":[{"code":88}]}` is `ErrRateLimited`, not `ErrNotFound`.
+Tombstones, unavailable posts, empty results and a missing `rest_id` are
+`ErrNotFound`; `UserUnavailable` is `ErrSuspended`; malformed JSON is
+`ErrRequestFailed`.
+
+The client's read methods drop an error only when it is partial (kind
+`NonFatal`, or a path below the root field, such as a deleted quoted post) and
+the data is usable; any other error fails the call. For pages without
+root-level errors both paths build identical values.
+
+`TweetDetail.Ancestors` holds the posts X returns before the focal post (its
+parent chain, root first, when the focal post is a reply);
+`TweetDetail.Replies` holds the posts after it.
 
 ### Social graph
 
@@ -246,6 +283,22 @@ tweet, _ = c.CreateTweet(ctx, "Check this out",
     x.WithMediaIDs("media_id_1", "media_id_2"),
     x.WithPossiblySensitive(),
 )
+```
+
+`CreatePost`, `QuotePost` and `ReplyToPost` take the same arguments and
+classify every failure as an `*x.OutcomeError` wrapping either `x.ErrDefinite`
+(the post was not published) or `x.ErrAmbiguous` (it may have been, e.g. the
+connection dropped after sending or X returned no post ID). A response that
+carries a created post ID is a success even when it also carries errors.
+Writes are never retried.
+
+```go
+tweet, err := c.ReplyToPost(ctx, tweetID, "Nice", x.WithMediaIDs(mediaID), x.WithPossiblySensitive())
+switch {
+case errors.Is(err, x.ErrAmbiguous):        // check before retrying
+case errors.Is(err, x.ErrAutomatedRequest): // definite; X flagged automation (226)
+case errors.Is(err, x.ErrDefinite):         // definite; safe to fix and retry
+}
 ```
 
 ### Engagement
@@ -417,7 +470,34 @@ if errors.Is(err, x.ErrTweetTooLong)      { /* >280 characters */ }
 if errors.Is(err, x.ErrAlreadyRetweeted)  { /* duplicate retweet */ }
 if errors.Is(err, x.ErrDMClosed)          { /* recipient has DMs closed */ }
 if errors.Is(err, x.ErrPartialResult)     { /* context cancelled mid-scrape */ }
+if errors.Is(err, x.ErrChallenge)         { /* verification needed or account locked (326) */ }
+if errors.Is(err, x.ErrDuplicatePost)     { /* duplicate of a recent post (187) */ }
+if errors.Is(err, x.ErrAutomatedRequest)  { /* flagged as automated (226) */ }
+if errors.Is(err, x.ErrReplyRestricted)   { /* replies restricted or target not visible (385, 433) */ }
+if errors.Is(err, x.ErrDailyPostLimit)    { /* daily post limit reached (185; also 344) */ }
+if errors.Is(err, x.ErrPostingLimited)    { /* posting temporarily limited (344) */ }
+if errors.Is(err, x.ErrMediaRejected)     { /* invalid, expired or unknown media ID, bad media mix (323, 324, 325, 386) */ }
 ```
+
+X's numeric error codes map to these sentinels the same way for GraphQL
+`errors` and for non-200 REST bodies (for example a 403 carrying code 226),
+and code mappings take precedence over message matching. Code 214 is
+`ErrInvalidParams`. Public references disagree on whether 344 is a short
+posting throttle or the daily limit, so a 344 matches both
+`ErrPostingLimited` and `ErrDailyPostLimit`; check `ErrPostingLimited` first
+to treat it differently from 185. These enforcement and content codes are
+never retried.
+
+Changes in v1.15.0 for existing callers:
+
+- A 403 carrying code 226 is `ErrAutomatedRequest` and a 403 carrying 326 is
+  `ErrChallenge`; neither matches `ErrForbidden` any more.
+- Code 144 ("No status found with that ID") is `ErrNotFound` when it is a
+  root-level error. When it is partial (a NonFatal error about an embedded
+  post) next to usable data, read methods such as `GetTweet` and
+  `SearchTweetsPage` now return the data instead of failing.
+- `CreateTweet`, `Reply` and `QuoteTweet` return the created post when X
+  sends one with an ID, even if the response also carries errors.
 
 ## MCP support
 
@@ -449,3 +529,12 @@ export X_TWID="..."
 
 go test -tags integration -v -count=1 ./...
 ```
+
+Unit tests (`go test ./...`) need no credentials. Recorded GraphQL bodies live
+in `testdata/graphql`. The SearchTimeline, TweetResultByRestId and
+UserByScreenName files are real Scarlett pages sanitized by
+`testdata/graphql/sanitize.py`: handles, names, text and URLs replaced, IDs
+remapped, timestamps shifted by a random offset and counts perturbed.
+`tweet_detail_synthetic.json` is synthetic, built by the same script from
+those sanitized posts. The script reads its source pages from a file kept
+outside the repository and refuses to write if any original value survives.
