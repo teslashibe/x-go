@@ -10,15 +10,20 @@ import (
 // ({"data":…,"errors":…}) and shares its parser with the matching Client
 // method, so both paths build identical values.
 //
-// Envelope rule: when data is present and not null it is parsed and errors
+// Envelope rule: when data holds the operation's root field
+// (search_by_raw_query, threaded_conversation_with_injections_v2, user or
+// tweetResult) with a value other than null, {} or [], it is parsed and errors
 // are ignored, because a page can carry errors for posts that are
-// unavailable. Otherwise the first error is mapped to a sentinel as the client
-// does. Malformed bodies are ErrRequestFailed.
+// unavailable. Otherwise the first error is mapped to a sentinel as the
+// client does, so {"data":{},"errors":[{"code":88}]} is ErrRateLimited, not
+// ErrNotFound. A body with neither a usable root nor errors goes to the
+// operation's parser (a missing root is ErrNotFound). Malformed bodies are
+// ErrRequestFailed.
 
 // ParseSearchTimeline parses one raw SearchTimeline response body. Tweets keep
 // Raw envelopes (SchemaVersion 1, Provider "x_graphql") exactly as SearchTweetsPage does.
 func ParseSearchTimeline(body []byte) (TweetPage, error) {
-	data, err := responseData(body)
+	data, err := responseData(body, "search_by_raw_query")
 	if err != nil {
 		return TweetPage{}, err
 	}
@@ -30,7 +35,7 @@ func ParseTweetDetail(body []byte, focalTweetID string) (*TweetDetail, error) {
 	if focalTweetID == "" {
 		return nil, fmt.Errorf("%w: focalTweetID must not be empty", ErrInvalidParams)
 	}
-	data, err := responseData(body)
+	data, err := responseData(body, "threaded_conversation_with_injections_v2")
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +44,7 @@ func ParseTweetDetail(body []byte, focalTweetID string) (*TweetDetail, error) {
 
 // ParseUserByScreenName parses one raw UserByScreenName body.
 func ParseUserByScreenName(body []byte) (*User, error) {
-	data, err := responseData(body)
+	data, err := responseData(body, "user")
 	if err != nil {
 		return nil, err
 	}
@@ -48,16 +53,16 @@ func ParseUserByScreenName(body []byte) (*User, error) {
 
 // ParseTweetResultByRestID parses one raw TweetResultByRestId body.
 func ParseTweetResultByRestID(body []byte) (*Tweet, error) {
-	data, err := responseData(body)
+	data, err := responseData(body, "tweetResult")
 	if err != nil {
 		return nil, err
 	}
 	return parseTweetResultData(data)
 }
 
-// responseData applies the envelope rule above. Error text never includes
-// the body.
-func responseData(body []byte) (json.RawMessage, error) {
+// responseData applies the envelope rule above for the operation whose data
+// root is root. Error text never includes the body.
+func responseData(body []byte, root string) (json.RawMessage, error) {
 	// Errors stay raw until needed so an unexpected error shape cannot
 	// reject a page whose data is usable.
 	var envelope struct {
@@ -67,17 +72,20 @@ func responseData(body []byte) (json.RawMessage, error) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("%w: decoding response: %v", ErrRequestFailed, err)
 	}
-	if len(envelope.Data) > 0 && string(envelope.Data) != "null" {
+	if usableData(envelope.Data, root) {
 		return envelope.Data, nil
 	}
 	var errs []gqlError
-	if len(envelope.Errors) > 0 && string(envelope.Errors) != "null" {
+	if presentJSON(envelope.Errors) {
 		if err := json.Unmarshal(envelope.Errors, &errs); err != nil {
 			return nil, fmt.Errorf("%w: decoding errors: %v", ErrRequestFailed, err)
 		}
 	}
 	if len(errs) > 0 {
 		return nil, classifyGQLError(errs[0])
+	}
+	if presentJSON(envelope.Data) {
+		return envelope.Data, nil
 	}
 	return nil, fmt.Errorf("%w: no data in response", ErrRequestFailed)
 }

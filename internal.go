@@ -22,6 +22,31 @@ type gqlResponse struct {
 type gqlError struct {
 	Message string `json:"message"`
 	Code    int    `json:"code"`
+	// Kind is X's error kind ("NonFatal", "Permissions", "Validation", …).
+	Kind string `json:"kind"`
+	// Path is the GraphQL path the error belongs to; a path longer than the
+	// root field points inside the data (for example an unavailable quoted
+	// post), not at the operation itself.
+	Path       []json.RawMessage `json:"path"`
+	Extensions struct {
+		Code int    `json:"code"`
+		Kind string `json:"kind"`
+	} `json:"extensions"`
+}
+
+// code returns X's numeric error code, from extensions when the top level
+// omits it.
+func (e gqlError) code() int {
+	if e.Code != 0 {
+		return e.Code
+	}
+	return e.Extensions.Code
+}
+
+// partial reports whether the error concerns part of the data (kind NonFatal,
+// or a path below the root field) rather than the operation as a whole.
+func (e gqlError) partial() bool {
+	return strings.EqualFold(e.Kind, "NonFatal") || strings.EqualFold(e.Extensions.Kind, "NonFatal") || len(e.Path) > 1
 }
 
 // ---------------------------------------------------------------------------
