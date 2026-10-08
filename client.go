@@ -636,7 +636,9 @@ func parseRetryAfter(val string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// isNonRetriable reports whether err should not be retried.
+// isNonRetriable reports whether err should not be retried. X enforcement and
+// content rejections (226, 185/344, 187, 385/433, 186, 327, 349, media codes)
+// are final: repeating the request only hits X again on a flagged account.
 func isNonRetriable(err error) bool {
 	return errors.Is(err, ErrInvalidAuth) ||
 		errors.Is(err, ErrUnauthorized) ||
@@ -645,7 +647,16 @@ func isNonRetriable(err error) bool {
 		errors.Is(err, ErrSuspended) ||
 		errors.Is(err, ErrInvalidParams) ||
 		errors.Is(err, ErrQueryIDStale) ||
-		errors.Is(err, ErrChallenge)
+		errors.Is(err, ErrChallenge) ||
+		errors.Is(err, ErrAutomatedRequest) ||
+		errors.Is(err, ErrDailyPostLimit) ||
+		errors.Is(err, ErrPostingLimited) ||
+		errors.Is(err, ErrDuplicatePost) ||
+		errors.Is(err, ErrReplyRestricted) ||
+		errors.Is(err, ErrTweetTooLong) ||
+		errors.Is(err, ErrAlreadyRetweeted) ||
+		errors.Is(err, ErrDMClosed) ||
+		errors.Is(err, ErrMediaRejected)
 }
 
 func truncate(s string, n int) string {
