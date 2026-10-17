@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -142,83 +141,4 @@ func parseSentMessage(data json.RawMessage, conversationID string) (*Message, er
 		Text:           entry.Text,
 		CreatedAt:      time.UnixMilli(ts),
 	}, nil
-}
-
-func parseConversations(data json.RawMessage) (ConversationPage, error) {
-	var resp struct {
-		InboxInitialState struct {
-			Conversations map[string]struct {
-				ConversationID  string `json:"conversation_id"`
-				Type            string `json:"type"`
-				Trusted         bool   `json:"trusted"`
-				LastReadEventID string `json:"last_read_event_id"`
-			} `json:"conversations"`
-			Cursor string `json:"cursor"`
-		} `json:"inbox_initial_state"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return ConversationPage{}, fmt.Errorf("%w: parsing conversations: %v", ErrRequestFailed, err)
-	}
-
-	page := ConversationPage{}
-	for _, conv := range resp.InboxInitialState.Conversations {
-		page.Conversations = append(page.Conversations, Conversation{
-			ID:              conv.ConversationID,
-			Type:            conv.Type,
-			Trusted:         conv.Trusted,
-			LastReadEventID: conv.LastReadEventID,
-		})
-	}
-	sort.Slice(page.Conversations, func(i, j int) bool {
-		return page.Conversations[i].ID < page.Conversations[j].ID
-	})
-	if resp.InboxInitialState.Cursor != "" {
-		page.NextCursor = resp.InboxInitialState.Cursor
-		page.HasNext = true
-	}
-	return page, nil
-}
-
-func parseMessages(data json.RawMessage) (MessagePage, error) {
-	var resp struct {
-		ConversationTimeline struct {
-			Entries []struct {
-				Message struct {
-					Data struct {
-						ID             string `json:"id"`
-						Text           string `json:"text"`
-						SenderID       string `json:"sender_id"`
-						ConversationID string `json:"conversation_id"`
-						CreatedAt      string `json:"time"`
-					} `json:"message_data"`
-				} `json:"message"`
-			} `json:"entries"`
-			MinEntryID string `json:"min_entry_id"`
-			Status     string `json:"status"`
-		} `json:"conversation_timeline"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return MessagePage{}, fmt.Errorf("%w: parsing messages: %v", ErrRequestFailed, err)
-	}
-
-	page := MessagePage{}
-	for _, entry := range resp.ConversationTimeline.Entries {
-		d := entry.Message.Data
-		if d.ID == "" {
-			continue
-		}
-		ts, _ := strconv.ParseInt(d.CreatedAt, 10, 64)
-		page.Messages = append(page.Messages, Message{
-			ID:             d.ID,
-			ConversationID: d.ConversationID,
-			SenderID:       d.SenderID,
-			Text:           d.Text,
-			CreatedAt:      time.UnixMilli(ts),
-		})
-	}
-	if resp.ConversationTimeline.MinEntryID != "" && resp.ConversationTimeline.Status == "HAS_MORE" {
-		page.NextCursor = resp.ConversationTimeline.MinEntryID
-		page.HasNext = true
-	}
-	return page, nil
 }

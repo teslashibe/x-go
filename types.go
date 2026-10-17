@@ -193,26 +193,33 @@ type Conversation struct {
 
 // Message is a single DM message.
 type Message struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversationId"`
-	SenderID       string    `json:"senderId"`
-	Text           string    `json:"text"`
-	CreatedAt      time.Time `json:"createdAt"`
-	MediaURLs      []string  `json:"mediaUrls,omitempty"`
+	ID             string         `json:"id"`
+	ConversationID string         `json:"conversationId"`
+	SenderID       string         `json:"senderId"`
+	RecipientID    string         `json:"recipientId,omitempty"`
+	Kind           string         `json:"kind,omitempty"`
+	Attachments    []DMAttachment `json:"attachments,omitempty"`
+	Text           string         `json:"text"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	MediaURLs      []string       `json:"mediaUrls,omitempty"`
 }
 
 // ConversationPage is one page of DM conversations.
 type ConversationPage struct {
-	Conversations []Conversation `json:"conversations"`
-	NextCursor    string         `json:"nextCursor,omitempty"`
-	HasNext       bool           `json:"hasNext"`
+	UpdateCursor  string                     `json:"updateCursor,omitempty"`
+	InboxHistory  map[string]DMFolderHistory `json:"inboxHistory,omitempty"`
+	Coverage      DMReadCoverage             `json:"coverage"`
+	Conversations []Conversation             `json:"conversations"`
+	NextCursor    string                     `json:"nextCursor,omitempty"`
+	HasNext       bool                       `json:"hasNext"`
 }
 
 // MessagePage is one page of messages within a conversation.
 type MessagePage struct {
-	Messages   []Message `json:"messages"`
-	NextCursor string    `json:"nextCursor,omitempty"`
-	HasNext    bool      `json:"hasNext"`
+	Coverage   DMReadCoverage `json:"coverage"`
+	Messages   []Message      `json:"messages"`
+	NextCursor string         `json:"nextCursor,omitempty"`
+	HasNext    bool           `json:"hasNext"`
 }
 
 // TweetOption configures CreateTweet, Reply, and QuoteTweet.
