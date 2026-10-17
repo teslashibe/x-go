@@ -13,6 +13,12 @@ package mcp
 //     auth-only helper, convenience wrapper around a more general method,
 //     etc.), add it here with a reason
 var Excluded = map[string]string{
+	// Low-level private history transport is consumed by the host's scoped inbox
+	// workflow; existing first-page DM tools retain their current contracts.
+	"GetConversationPage":  "low-level paged private history; requires host-owned account authority, coverage and per-attempt request admission",
+	"GetConversationsPage": "first-page compatibility transport; unverified generic continuation is intentionally unavailable",
+	"GetInboxPage":         "low-level folder-history transport; requires host-owned account authority and distinct update/history coverage tracking",
+
 	// Internal observability / lifecycle helpers — surfaced via the host
 	// application's MCP middleware or initialization, not as callable tools.
 	"RateLimit":                "internal observability; surfaced via the host application's MCP middleware, not as a callable tool",
