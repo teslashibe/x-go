@@ -115,3 +115,17 @@ func TestDMReadHistoryContinuationRequest(t *testing.T) {
 		t.Fatalf("continuation calls=%d page=%+v err=%v", calls, page, err)
 	}
 }
+
+func TestDMReadInboxMessagesCarryObservedHeads(t *testing.T) {
+	page, err := parseConversations(json.RawMessage(`{"inbox_initial_state":{"conversations":{"2-3":{"conversation_id":"2-3","type":"ONE_TO_ONE","last_read_event_id":"90","participants":[{"user_id":"2"},{"user_id":"3"}]}},"entries":[{"message":{"id":"9","conversation_id":"2-3","time":"1700000000999","message_data":{"id":"9","sender_id":"2","recipient_id":"3","time":"1700000000123","text":"fixture"}}},{"conversation_read":{"id":"90"}}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].CreatedAt.UnixMilli() != 1700000000123 || page.Messages[0].EventAt.UnixMilli() != 1700000000999 {
+		t.Fatalf("event/message times mixed %+v", page)
+	}
+	conv := page.Conversations[0]
+	if conv.LastMessage == nil || conv.LastMessage.ID != "9" || conv.LatestEventID != "9" || conv.LatestEventAt.UnixMilli() != 1700000000999 || conv.Coverage.State != "partial" || conv.Coverage.UnsupportedEntries != 1 {
+		t.Fatalf("head metadata missing %+v", conv)
+	}
+}

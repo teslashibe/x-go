@@ -183,16 +183,20 @@ func (r RateLimitState) ResetIn() time.Duration {
 
 // Conversation is a DM conversation.
 type Conversation struct {
-	ID              string   `json:"id"`
-	Type            string   `json:"type"`
-	Participants    []User   `json:"participants"`
-	LastMessage     *Message `json:"lastMessage,omitempty"`
-	LastReadEventID string   `json:"lastReadEventId,omitempty"`
-	Trusted         bool     `json:"trusted"`
+	Coverage        DMReadCoverage `json:"coverage"`
+	LatestEventID   string         `json:"latestEventId,omitempty"`
+	LatestEventAt   time.Time      `json:"latestEventAt,omitempty"`
+	ID              string         `json:"id"`
+	Type            string         `json:"type"`
+	Participants    []User         `json:"participants"`
+	LastMessage     *Message       `json:"lastMessage,omitempty"`
+	LastReadEventID string         `json:"lastReadEventId,omitempty"`
+	Trusted         bool           `json:"trusted"`
 }
 
 // Message is a single DM message.
 type Message struct {
+	EventAt        time.Time      `json:"eventAt"`
 	ID             string         `json:"id"`
 	ConversationID string         `json:"conversationId"`
 	SenderID       string         `json:"senderId"`
@@ -206,6 +210,7 @@ type Message struct {
 
 // ConversationPage is one page of DM conversations.
 type ConversationPage struct {
+	Messages      []Message                  `json:"messages"`
 	UpdateCursor  string                     `json:"updateCursor,omitempty"`
 	InboxHistory  map[string]DMFolderHistory `json:"inboxHistory,omitempty"`
 	Coverage      DMReadCoverage             `json:"coverage"`

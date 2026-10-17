@@ -201,7 +201,41 @@ func parseConversations(data json.RawMessage) (ConversationPage, error) {
 		if conv.Type == "ONE_TO_ONE" && len(participants) != 2 {
 			page.Coverage.Reason = "incomplete_participant_membership"
 		}
-		page.Conversations = append(page.Conversations, Conversation{ID: conv.ConversationID, Type: conv.Type, Trusted: conv.Trusted, LastReadEventID: conv.LastReadEventID, Participants: participants})
+		page.Conversations = append(page.Conversations, Conversation{ID: conv.ConversationID, Type: conv.Type, Trusted: conv.Trusted, LastReadEventID: conv.LastReadEventID, Participants: participants, Coverage: DMReadCoverage{State: "partial", Reason: "history_not_read", Membership: "unverified", CursorState: "absent_unverified"}})
+	}
+	// The head carries messages even when X already marked them read. Reuse the
+	// history parser; the synthetic envelope changes no provider content.
+	if entries, ok := body["entries"]; ok {
+		envelope, _ := json.Marshal(map[string]any{"conversation_timeline": map[string]any{"entries": entries, "status": "INBOX_HEAD"}})
+		parsed, err := parseMessages(envelope)
+		if err != nil {
+			return ConversationPage{}, err
+		}
+		page.Messages = parsed.Messages
+		page.Coverage.UnsupportedEntries = parsed.Coverage.UnsupportedEntries
+		for i := range page.Conversations {
+			conv := &page.Conversations[i]
+			if parsed.Coverage.UnsupportedEntries > 0 {
+				conv.Coverage.Reason = "unsupported_event"
+				conv.Coverage.UnsupportedEntries = parsed.Coverage.UnsupportedEntries
+			}
+			for j := range page.Messages {
+				message := &page.Messages[j]
+				if message.ConversationID != conv.ID {
+					continue
+				}
+				if conv.LastMessage == nil || message.CreatedAt.After(conv.LastMessage.CreatedAt) || message.CreatedAt.Equal(conv.LastMessage.CreatedAt) && message.ID > conv.LastMessage.ID {
+					conv.LastMessage = message
+				}
+				if message.EventAt.After(conv.LatestEventAt) || message.EventAt.Equal(conv.LatestEventAt) && message.ID > conv.LatestEventID {
+					conv.LatestEventAt = message.EventAt
+					conv.LatestEventID = message.ID
+				}
+				if len(message.Attachments) > 0 {
+					conv.Coverage.Reason = "unsupported_attachment"
+				}
+			}
+		}
 	}
 	sort.Slice(page.Conversations, func(i, j int) bool { return page.Conversations[i].ID < page.Conversations[j].ID })
 	if raw, ok := body["cursor"]; ok {
@@ -294,7 +328,7 @@ func parseMessages(data json.RawMessage) (MessagePage, error) {
 		if err != nil || ts <= 0 {
 			return MessagePage{}, dmReadError("invalid_message_time")
 		}
-		m := Message{ID: d.ID, Text: d.Text, SenderID: d.SenderID, RecipientID: d.RecipientID, ConversationID: message.ConversationID, CreatedAt: time.UnixMilli(ts), Kind: "human"}
+		m := Message{ID: d.ID, Text: d.Text, SenderID: d.SenderID, RecipientID: d.RecipientID, ConversationID: message.ConversationID, CreatedAt: time.UnixMilli(ts), EventAt: time.UnixMilli(outerTime), Kind: "human"}
 		if len(d.Attachment) > 0 && string(d.Attachment) != "null" {
 			m.Attachments = []DMAttachment{{Kind: "unknown", Supported: false}}
 			page.Coverage.State = "partial"
