@@ -122,6 +122,11 @@ func (c *Client) GetConversationPage(ctx context.Context, conversationID string,
 		if err != nil {
 			return MessagePage{}, err
 		}
+		for _, cid := range page.noticeConversationIDs {
+			if cid != conversationID {
+				return MessagePage{}, dmReadError("conflicting_requested_conversation")
+			}
+		}
 		for _, m := range page.Messages {
 			if m.ConversationID != conversationID {
 				return MessagePage{}, dmReadError("conflicting_requested_conversation")
@@ -142,6 +147,11 @@ func (c *Client) GetConversationPage(ctx context.Context, conversationID string,
 	page, err := parseMessages(data)
 	if err != nil {
 		return MessagePage{}, err
+	}
+	for _, cid := range page.noticeConversationIDs {
+		if cid != conversationID {
+			return MessagePage{}, dmReadError("conflicting_requested_conversation")
+		}
 	}
 	for _, m := range page.Messages {
 		if m.ConversationID != conversationID {
@@ -291,7 +301,8 @@ func parseMessages(data json.RawMessage) (MessagePage, error) {
 	for _, entry := range entries {
 		raw, ok := entry["message"]
 		if !ok {
-			if knownConversationRead(entry) {
+			if cid := knownConversationRead(entry); cid != "" {
+				page.noticeConversationIDs = append(page.noticeConversationIDs, cid)
 				page.Coverage.KnownNoticeEntries++
 				continue
 			}
@@ -419,13 +430,13 @@ func dmConversationID(v string) bool {
 // f6bfc8610bd3ec8af2fe000076bc1b53a6327e7d, src/tweety/types/inbox.py
 // lines295-296 and373-381. A read receipt is a non-human notice; it never
 // establishes unreadness, a reply, or history completeness.
-func knownConversationRead(entry map[string]json.RawMessage) bool {
+func knownConversationRead(entry map[string]json.RawMessage) string {
 	if len(entry) != 1 {
-		return false
+		return ""
 	}
 	raw, ok := entry["conversation_read"]
 	if !ok {
-		return false
+		return ""
 	}
 	var notice struct {
 		ID              string `json:"id"`
@@ -434,8 +445,11 @@ func knownConversationRead(entry map[string]json.RawMessage) bool {
 		LastReadEventID string `json:"last_read_event_id"`
 	}
 	if json.Unmarshal(raw, &notice) != nil || !dmNumericID(notice.ID) || !dmConversationID(notice.ConversationID) || !dmNumericID(notice.LastReadEventID) {
-		return false
+		return ""
 	}
 	millis, err := strconv.ParseInt(notice.Time, 10, 64)
-	return err == nil && millis > 0
+	if err != nil || millis <= 0 {
+		return ""
+	}
+	return notice.ConversationID
 }

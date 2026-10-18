@@ -167,3 +167,17 @@ func TestDMReadMixedMessageEnvelopeRetainsUnknownGap(t *testing.T) {
 		t.Fatal(page.Coverage, err)
 	}
 }
+
+func TestDMHistoryReadNoticeMustMatchRequestedConversation(t *testing.T) {
+	for _, cursor := range []string{"", "8"} {
+		for _, cid := range []string{"2-3", "4-5"} {
+			c := newTestClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return jsonResponse(200, `{"conversation_timeline":{"entries":[{"conversation_read":{"id":"9","conversation_id":"`+cid+`","time":"1700000000000","last_read_event_id":"8"}}],"status":"AT_END"}}`), nil
+			}))
+			_, err := c.GetConversationPage(context.Background(), "2-3", DMPageOptions{Cursor: cursor})
+			if cid == "2-3" && err != nil || cid != "2-3" && !errors.Is(err, ErrRequestFailed) {
+				t.Fatal("notice scope mismatch", cursor, cid, err)
+			}
+		}
+	}
+}
