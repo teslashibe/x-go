@@ -92,6 +92,8 @@ type DMReadCoverage struct {
 	Reason              string `json:"reason,omitempty"`
 	PaginationSupported bool   `json:"paginationSupported"`
 	UnsupportedEntries  int    `json:"unsupportedEntries,omitempty"`
+	KnownNoticeEntries  int    `json:"knownNoticeEntries,omitempty"`
+	UnknownEventEntries int    `json:"unknownEventEntries,omitempty"`
 }
 
 // DMAttachment preserves the existence of content the SDK cannot decode.
@@ -213,8 +215,12 @@ func parseConversations(data json.RawMessage) (ConversationPage, error) {
 		}
 		page.Messages = parsed.Messages
 		page.Coverage.UnsupportedEntries = parsed.Coverage.UnsupportedEntries
+		page.Coverage.KnownNoticeEntries = parsed.Coverage.KnownNoticeEntries
+		page.Coverage.UnknownEventEntries = parsed.Coverage.UnknownEventEntries
 		for i := range page.Conversations {
 			conv := &page.Conversations[i]
+			conv.Coverage.KnownNoticeEntries = parsed.Coverage.KnownNoticeEntries
+			conv.Coverage.UnknownEventEntries = parsed.Coverage.UnknownEventEntries
 			if parsed.Coverage.UnsupportedEntries > 0 {
 				conv.Coverage.Reason = "unsupported_event"
 				conv.Coverage.UnsupportedEntries = parsed.Coverage.UnsupportedEntries
@@ -285,6 +291,11 @@ func parseMessages(data json.RawMessage) (MessagePage, error) {
 	for _, entry := range entries {
 		raw, ok := entry["message"]
 		if !ok {
+			if knownConversationRead(entry) {
+				page.Coverage.KnownNoticeEntries++
+				continue
+			}
+			page.Coverage.UnknownEventEntries++
 			page.Coverage.State = "partial"
 			page.Coverage.Reason = "unsupported_event"
 			page.Coverage.UnsupportedEntries++
@@ -395,4 +406,31 @@ func dmConversationID(v string) bool {
 		}
 	}
 	return true
+}
+
+// Primary source schema:
+// https://github.com/mahrtayyab/tweety/blob/f6bfc8610bd3ec8af2fe000076bc1b53a6327e7d/src/tweety/types/inbox.py
+// mahrtayyab/tweety at
+// f6bfc8610bd3ec8af2fe000076bc1b53a6327e7d, src/tweety/types/inbox.py
+// lines295-296 and373-381. A read receipt is a non-human notice; it never
+// establishes unreadness, a reply, or history completeness.
+func knownConversationRead(entry map[string]json.RawMessage) bool {
+	if len(entry) != 1 {
+		return false
+	}
+	raw, ok := entry["conversation_read"]
+	if !ok {
+		return false
+	}
+	var notice struct {
+		ID              string `json:"id"`
+		ConversationID  string `json:"conversation_id"`
+		Time            string `json:"time"`
+		LastReadEventID string `json:"last_read_event_id"`
+	}
+	if json.Unmarshal(raw, &notice) != nil || !dmNumericID(notice.ID) || strings.TrimSpace(notice.ConversationID) == "" || !dmNumericID(notice.LastReadEventID) {
+		return false
+	}
+	millis, err := strconv.ParseInt(notice.Time, 10, 64)
+	return err == nil && millis > 0
 }

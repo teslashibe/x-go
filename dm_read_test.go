@@ -129,3 +129,33 @@ func TestDMReadInboxMessagesCarryObservedHeads(t *testing.T) {
 		t.Fatalf("head metadata missing %+v", conv)
 	}
 }
+
+func TestConversationReadNoticeClassification(t *testing.T) {
+	for _, test := range []struct {
+		name, entry string
+		known       bool
+	}{
+		{"read", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"1700000000000","last_read_event_id":"899"}}`, true},
+		{"missing_identity", `{"conversation_read":{"id":"900","time":"1700000000000","last_read_event_id":"899"}}`, false},
+		{"bad_time", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"bad","last_read_event_id":"899"}}`, false},
+		{"unknown", `{"conversation_create":{"id":"900"}}`, false},
+		{"mixed", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"1700000000000","last_read_event_id":"899"},"unknown":{}}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			page, err := parseMessages([]byte(`{"conversation_timeline":{"entries":[` + test.entry + `],"status":"AT_END"}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page.Messages) != 0 {
+				t.Fatal("notice became human activity")
+			}
+			if test.known {
+				if page.Coverage.KnownNoticeEntries != 1 || page.Coverage.UnknownEventEntries != 0 || page.Coverage.UnsupportedEntries != 0 {
+					t.Fatal(page.Coverage)
+				}
+			} else if page.Coverage.KnownNoticeEntries != 0 || page.Coverage.UnknownEventEntries != 1 || page.Coverage.UnsupportedEntries != 1 {
+				t.Fatal(page.Coverage)
+			}
+		})
+	}
+}
