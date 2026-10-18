@@ -113,6 +113,9 @@ type Client struct {
 	rlMu              sync.Mutex
 	rlState           RateLimitState
 	viewer            *User
+	chatClientIDOnce  sync.Once
+	chatClientID      string
+	chatClientIDErr   error
 	txState           transactionState
 	txInitErr         error // non-nil if initTransaction failed; Followers/Search may 404
 }
