@@ -336,3 +336,29 @@ func TestXChatClientUUIDIsStablePrivateAndModernOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestXChatMembershipTypedRejectionReasons(t *testing.T) {
+	for _, tc := range []struct{ name, body, reason string }{
+		{"cid", strings.Replace(chatMembershipFixture, `"conversation_id":"123:456"`, `"conversation_id":"123:789"`, 1), "xchat_membership_cid_mismatch"},
+		{"count", `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:456","participants_results":[]}}}}}`, "xchat_membership_participant_count"},
+		{"group", strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), "xchat_membership_group_present"},
+		{"conflict", strings.Replace(chatMembershipFixture, `"rest_id":"123","result":{"rest_id":"123"}`, `"rest_id":"123","result":{"rest_id":"789"}`, 1), "xchat_membership_participant_conflict"},
+		{"pair", strings.ReplaceAll(chatMembershipFixture, `"456"`, `"789"`), "xchat_membership_pair_mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(tc.body), nil })
+			_, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
+			var typed *DMReadError
+			if calls != 1 || !errors.As(err, &typed) || typed.Reason != tc.reason || !errors.Is(err, ErrRequestFailed) {
+				t.Fatal("membership classification changed", calls, err)
+			}
+			if err.Error() != ErrRequestFailed.Error()+": DM response "+tc.reason {
+				t.Fatal("error format changed")
+			}
+			if strings.Contains(err.Error(), "123") || strings.Contains(err.Error(), "789") {
+				t.Fatal("identity leaked into error")
+			}
+		})
+	}
+}

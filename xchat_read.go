@@ -122,15 +122,21 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 		return XChatConversation{}, dmReadError("xchat_missing_membership")
 	}
 	detail := body.Result.Data.Detail
-	if detail.ID != conversationID || len(detail.Participants) != 2 || len(detail.Group) > 0 && string(detail.Group) != "null" {
-		return XChatConversation{}, dmReadError("xchat_membership_mismatch")
+	if detail.ID != conversationID {
+		return XChatConversation{}, dmReadError("xchat_membership_cid_mismatch")
+	}
+	if len(detail.Participants) != 2 {
+		return XChatConversation{}, dmReadError("xchat_membership_participant_count")
+	}
+	if len(detail.Group) > 0 && string(detail.Group) != "null" {
+		return XChatConversation{}, dmReadError("xchat_membership_group_present")
 	}
 	ids := make([]string, 0, 2)
 	for _, p := range detail.Participants {
 		id := p.ID
 		if p.Result != nil {
 			if id != "" && p.Result.ID != "" && id != p.Result.ID {
-				return XChatConversation{}, dmReadError("xchat_membership_mismatch")
+				return XChatConversation{}, dmReadError("xchat_membership_participant_conflict")
 			}
 			if id == "" {
 				id = p.Result.ID
@@ -142,7 +148,7 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 		ids = append(ids, id)
 	}
 	if !(ids[0] == senderID && ids[1] == peerID || ids[1] == senderID && ids[0] == peerID) {
-		return XChatConversation{}, dmReadError("xchat_membership_mismatch")
+		return XChatConversation{}, dmReadError("xchat_membership_pair_mismatch")
 	}
 	return XChatConversation{ID: conversationID, SenderID: senderID, PeerID: peerID, ParticipantIDs: ids, client: c, conversation: conversationID, sender: senderID, peer: peerID}, nil
 }
