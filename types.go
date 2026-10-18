@@ -197,6 +197,7 @@ type Conversation struct {
 // DMMessageIdentity preserves protocol-native identity separately from Message.ID.
 // VerificationMode describes delivery provenance, never inferred signature proof.
 type DMMessageIdentity struct {
+	NativeConversationID  string `json:"native_conversation_id,omitempty"`
 	Protocol              string `json:"protocol"`
 	NativeMessageID       string `json:"native_message_id"`
 	SequenceID            string `json:"sequence_id"`

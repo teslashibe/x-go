@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -74,7 +75,7 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 	if c.restID != "" && c.restID != senderID {
 		return XChatConversation{}, ErrInvalidParams
 	}
-	if !dmConversationID(conversationID) || !dmNumericID(senderID) || !dmNumericID(peerID) || senderID == peerID {
+	if !chatConversationID(conversationID, senderID, peerID) || !dmNumericID(senderID) || !dmNumericID(peerID) || senderID == peerID {
 		return XChatConversation{}, ErrInvalidParams
 	}
 	data, err := c.chatGET(ctx, chatMembershipPath, struct {
@@ -255,7 +256,7 @@ func (c *Client) GetXChatConversationPage(ctx context.Context, conv XChatConvers
 	return page, nil
 }
 func chatSequence(s string) bool {
-	if !dmNumericID(s) {
+	if !dmNumericID(s) || s[0] == '0' {
 		return false
 	}
 	n, err := strconv.ParseUint(s, 10, 63)
@@ -265,4 +266,14 @@ func chatSequenceLess(a, b string) bool {
 	x, _ := strconv.ParseUint(a, 10, 63)
 	y, _ := strconv.ParseUint(b, 10, 63)
 	return x < y
+}
+
+// Native one-to-one XChat IDs join lexicographically sorted numeric members
+// with ':'. Legacy REST uses '-' and is intentionally not accepted here.
+// Protocol facts: mautrix/twitter 726c742bf21211649d3bca4382f5467d07fcd735,
+// pkg/twittermeow/methods/methods.go CreateConversationID and
+// pkg/connector/conversationdata.go NormalizeConversationID. No code copied.
+func chatConversationID(id, sender, peer string) bool {
+	parts := strings.Split(id, ":")
+	return len(parts) == 2 && dmNumericID(parts[0]) && dmNumericID(parts[1]) && parts[0][0] != '0' && parts[1][0] != '0' && parts[0] < parts[1] && (parts[0] == sender && parts[1] == peer || parts[0] == peer && parts[1] == sender)
 }
