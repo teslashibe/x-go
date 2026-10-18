@@ -221,10 +221,11 @@ type ConversationPage struct {
 
 // MessagePage is one page of messages within a conversation.
 type MessagePage struct {
-	Coverage   DMReadCoverage `json:"coverage"`
-	Messages   []Message      `json:"messages"`
-	NextCursor string         `json:"nextCursor,omitempty"`
-	HasNext    bool           `json:"hasNext"`
+	noticeConversationIDs []string
+	Coverage              DMReadCoverage `json:"coverage"`
+	Messages              []Message      `json:"messages"`
+	NextCursor            string         `json:"nextCursor,omitempty"`
+	HasNext               bool           `json:"hasNext"`
 }
 
 // TweetOption configures CreateTweet, Reply, and QuoteTweet.

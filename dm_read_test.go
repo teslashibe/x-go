@@ -129,3 +129,55 @@ func TestDMReadInboxMessagesCarryObservedHeads(t *testing.T) {
 		t.Fatalf("head metadata missing %+v", conv)
 	}
 }
+
+func TestConversationReadNoticeClassification(t *testing.T) {
+	for _, test := range []struct {
+		name, entry string
+		known       bool
+	}{
+		{"read", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"1700000000000","last_read_event_id":"899"}}`, true},
+		{"garbage_identity", `{"conversation_read":{"id":"900","conversation_id":"garbage","time":"1700000000000","last_read_event_id":"899"}}`, false},
+		{"missing_identity", `{"conversation_read":{"id":"900","time":"1700000000000","last_read_event_id":"899"}}`, false},
+		{"bad_time", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"bad","last_read_event_id":"899"}}`, false},
+		{"unknown", `{"conversation_create":{"id":"900"}}`, false},
+		{"mixed", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"1700000000000","last_read_event_id":"899"},"unknown":{}}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			page, err := parseMessages([]byte(`{"conversation_timeline":{"entries":[` + test.entry + `],"status":"AT_END"}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page.Messages) != 0 {
+				t.Fatal("notice became human activity")
+			}
+			if test.known {
+				if page.Coverage.KnownNoticeEntries != 1 || page.Coverage.UnknownEventEntries != 0 || page.Coverage.UnsupportedEntries != 0 {
+					t.Fatal(page.Coverage)
+				}
+			} else if page.Coverage.KnownNoticeEntries != 0 || page.Coverage.UnknownEventEntries != 1 || page.Coverage.UnsupportedEntries != 1 {
+				t.Fatal(page.Coverage)
+			}
+		})
+	}
+}
+
+func TestDMReadMixedMessageEnvelopeRetainsUnknownGap(t *testing.T) {
+	page, err := parseMessages([]byte(`{"conversation_timeline":{"entries":[{"message":{"id":"9","conversation_id":"2-3","time":"1700000000123","message_data":{"id":"9","sender_id":"2","recipient_id":"3","time":"1700000000123","text":"fixture"}},"unknown":{}}],"status":"AT_END"}}`))
+	if err != nil || len(page.Messages) != 1 || page.Coverage.UnknownEventEntries != 1 || page.Coverage.UnsupportedEntries != 1 {
+		t.Fatal(page.Coverage, err)
+	}
+}
+
+func TestDMHistoryReadNoticeMustMatchRequestedConversation(t *testing.T) {
+	for _, cursor := range []string{"", "8"} {
+		for _, cid := range []string{"2-3", "4-5"} {
+			c := newTestClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return jsonResponse(200, `{"conversation_timeline":{"entries":[{"conversation_read":{"id":"9","conversation_id":"`+cid+`","time":"1700000000000","last_read_event_id":"8"}}],"status":"AT_END"}}`), nil
+			}))
+			_, err := c.GetConversationPage(context.Background(), "2-3", DMPageOptions{Cursor: cursor})
+			if cid == "2-3" && err != nil || cid != "2-3" && !errors.Is(err, ErrRequestFailed) {
+				t.Fatal("notice scope mismatch", cursor, cid, err)
+			}
+		}
+	}
+}
