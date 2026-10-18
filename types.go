@@ -194,18 +194,30 @@ type Conversation struct {
 	Trusted         bool           `json:"trusted"`
 }
 
+// DMMessageIdentity preserves protocol-native identity separately from Message.ID.
+// VerificationMode describes delivery provenance, never inferred signature proof.
+type DMMessageIdentity struct {
+	Protocol              string `json:"protocol"`
+	NativeMessageID       string `json:"native_message_id"`
+	SequenceID            string `json:"sequence_id"`
+	VerificationMode      string `json:"verification_mode"`
+	RecipientSource       string `json:"recipient_source"`
+	CryptographicVerified bool   `json:"cryptographic_verified"`
+}
+
 // Message is a single DM message.
 type Message struct {
-	EventAt        time.Time      `json:"eventAt"`
-	ID             string         `json:"id"`
-	ConversationID string         `json:"conversationId"`
-	SenderID       string         `json:"senderId"`
-	RecipientID    string         `json:"recipientId,omitempty"`
-	Kind           string         `json:"kind,omitempty"`
-	Attachments    []DMAttachment `json:"attachments,omitempty"`
-	Text           string         `json:"text"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	MediaURLs      []string       `json:"mediaUrls,omitempty"`
+	Identity       *DMMessageIdentity `json:"identity,omitempty"`
+	EventAt        time.Time          `json:"eventAt"`
+	ID             string             `json:"id"`
+	ConversationID string             `json:"conversationId"`
+	SenderID       string             `json:"senderId"`
+	RecipientID    string             `json:"recipientId,omitempty"`
+	Kind           string             `json:"kind,omitempty"`
+	Attachments    []DMAttachment     `json:"attachments,omitempty"`
+	Text           string             `json:"text"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	MediaURLs      []string           `json:"mediaUrls,omitempty"`
 }
 
 // ConversationPage is one page of DM conversations.

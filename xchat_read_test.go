@@ -1,0 +1,264 @@
+package x
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type chatReadTransport func(*http.Request) (*http.Response, error)
+
+func (f chatReadTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func chatReadClient(f chatReadTransport) *Client {
+	return &Client{httpClient: &http.Client{Transport: f}, cookies: Cookies{AuthToken: "fixture-auth", CT0: "fixture-csrf"}, restID: "123", userAgent: "fixture"}
+}
+func chatReadResponse(body string) *http.Response {
+	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+}
+
+const chatMembershipFixture = `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123-456","participants_results":[{"rest_id":"123","result":{"rest_id":"123"}},{"result":{"rest_id":"456"}}]}}}}}`
+
+func chatReadSeal(c *Client) XChatConversation {
+	return XChatConversation{ID: "123-456", SenderID: "123", PeerID: "456", ParticipantIDs: []string{"123", "456"}, client: c, conversation: "123-456", sender: "123", peer: "456"}
+}
+
+// Independent synthetic TBinary event construction from official MIT schema.
+func chatWireField(kind byte, id int16, value []byte) []byte {
+	return append([]byte{kind, byte(id >> 8), byte(id)}, value...)
+}
+func chatWireString(s string) []byte {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, uint32(len(s)))
+	return append(b, s...)
+}
+func chatWireStruct(fields ...[]byte) []byte {
+	var b []byte
+	for _, f := range fields {
+		b = append(b, f...)
+	}
+	return append(b, 0)
+}
+func chatWireEvent(sequence, sender, conv string, detail []byte, messageIDs ...string) string {
+	messageID := fmt.Sprintf("a9ad4597-3869-4c76-9d36-%012s", sequence)
+	if len(messageIDs) > 0 {
+		messageID = messageIDs[0]
+	}
+	raw := chatWireStruct(chatWireField(11, 1, chatWireString(sequence)), chatWireField(11, 2, chatWireString(messageID)), chatWireField(11, 3, chatWireString(sender)), chatWireField(11, 4, chatWireString(conv)), chatWireField(11, 6, chatWireString("1792308000000")), chatWireField(12, 7, detail))
+	return base64.StdEncoding.EncodeToString(raw)
+}
+func chatWirePlain(text string) []byte {
+	content := chatWireStruct(chatWireField(12, 1, chatWireStruct(chatWireField(12, 1, chatWireStruct(chatWireField(11, 1, chatWireString(text)))))))
+	return chatWireStruct(chatWireField(12, 1, chatWireStruct(chatWireField(11, 100, chatWireString(string(content))))))
+}
+func chatPageFixture(events []string, more bool, keys []string) string {
+	v := map[string]any{"data": map[string]any{"get_conversation_page": map[string]any{"encoded_message_events": events, "has_more": more, "missing_conversation_key_change_events": keys}}}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+func TestXChatMembershipExactRequestAndSeal(t *testing.T) {
+	calls := 0
+	c := chatReadClient(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != "GET" || r.URL.Scheme != "https" || r.URL.Host != "api.x.com" || r.URL.Path != "/graphql/"+chatMembershipPath || r.Header.Get("X-Csrf-Token") != "fixture-csrf" || !strings.Contains(r.Header.Get("Cookie"), "auth_token=fixture-auth") {
+			t.Fatal("wrong native request")
+		}
+		var vars map[string]any
+		if json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars) != nil || len(vars) != 2 || vars["conversation_id"] != "123-456" || vars["include_user_public_keys"] != false {
+			t.Fatal("wrong variables")
+		}
+		return chatReadResponse(chatMembershipFixture), nil
+	})
+	conv, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456")
+	if err != nil || len(conv.ParticipantIDs) != 2 || calls != 1 {
+		t.Fatal(conv, err, calls)
+	}
+	conv.ID = "123-789"
+	if _, err = c.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); !errors.Is(err, ErrInvalidParams) || calls != 1 {
+		t.Fatal("mutated membership dispatched")
+	}
+	other := chatReadClient(nil)
+	conv = chatReadSeal(c)
+	if _, err = other.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); !errors.Is(err, ErrInvalidParams) {
+		t.Fatal("transferred membership")
+	}
+}
+
+func TestXChatMembershipRejectsMismatches(t *testing.T) {
+	cases := []string{strings.Replace(chatMembershipFixture, `"conversation_id":"123-456"`, `"conversation_id":"123-789"`, 1), strings.Replace(chatMembershipFixture, `"rest_id":"456"`, `"rest_id":"789"`, 1), strings.Replace(chatMembershipFixture, `"result":{"rest_id":"456"}`, `"rest_id":"123"`, 1), strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), `{"data":{"get_inbox_page_conversation_data":null}}`}
+	for _, body := range cases {
+		calls := 0
+		c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(body), nil })
+		if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+			t.Fatal("accepted mismatched membership")
+		}
+	}
+}
+
+func TestXChatHistoryRequestPlaintextAndPagination(t *testing.T) {
+	calls := 0
+	events := []string{chatWireEvent("200", "456", "123-456", chatWirePlain("synthetic text")), chatWireEvent("190", "123", "123-456", chatWireStruct(chatWireField(12, 6, chatWireStruct())))}
+	c := chatReadClient(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != "GET" || r.URL.Host != "api.x.com" || r.URL.Path != "/graphql/"+chatHistoryPath {
+			t.Fatal("wrong history endpoint")
+		}
+		var vars map[string]any
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars)
+		if len(vars) != 4 || vars["conversation_id"] != "123-456" || vars["min_local_sequence_id"] != chatInitialSequence || vars["min_conversation_key_version"] != chatInitialSequence {
+			t.Fatal("wrong history variables")
+		}
+		settings := vars["query_settings"].(map[string]any)
+		if len(settings) != 4 || settings["conversation_event_limit"] != float64(200) {
+			t.Fatal("wrong settings")
+		}
+		return chatReadResponse(chatPageFixture(events, true, []string{"not-decoded-not-cursor"})), nil
+	})
+	page, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{})
+	if err != nil || calls != 1 || len(page.Events) != 2 || page.Events[0].Text != "synthetic text" || page.Events[0].RecipientID != "123" || page.Events[0].SequenceID == page.Events[0].MessageID || page.Events[0].Verified || page.NextCursor != "190" || !page.HasMore || page.SupplementalKeyEvents != 1 || page.Coverage.State != "partial" {
+		t.Fatal(page, err, calls)
+	}
+}
+
+func TestXChatHistoryEncryptedUnknownAndStalled(t *testing.T) {
+	encrypted := chatWireStruct(chatWireField(12, 1, chatWireStruct(chatWireField(11, 100, chatWireString("ciphertext")), chatWireField(11, 101, chatWireString("key-version")))))
+	for _, tc := range []struct {
+		events         []string
+		more           bool
+		cursor, reason string
+	}{{[]string{chatWireEvent("200", "456", "123-456", encrypted)}, false, "", "xchat_encrypted_content"}, {[]string{"not-base64"}, true, "", "xchat_cursor_stalled"}} {
+		c := chatReadClient(func(*http.Request) (*http.Response, error) {
+			return chatReadResponse(chatPageFixture(tc.events, tc.more, nil)), nil
+		})
+		page, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{Cursor: tc.cursor})
+		if err != nil || page.Coverage.State != "partial" || page.Coverage.Reason != tc.reason {
+			t.Fatal(page, err)
+		}
+		for _, evt := range page.Events {
+			if evt.Encrypted && evt.Text != "" || evt.Verified {
+				t.Fatal("unverified content upgraded")
+			}
+		}
+	}
+}
+
+func TestXChatHistoryIdentityAndMalformedPages(t *testing.T) {
+	bodies := []string{chatPageFixture([]string{chatWireEvent("200", "789", "123-456", chatWirePlain("wrong sender"))}, false, nil), chatPageFixture([]string{chatWireEvent("200", "456", "123-789", chatWirePlain("wrong conversation"))}, false, nil), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":null}}}`, `{"data":{"get_conversation_page":{"has_more":false}}}`, `{"data":{"get_conversation_page":null}}`, strings.Repeat("x", maxResponseBody+1), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":false}},"errors"
+ "fmt":[{"message":"partial","kind":"NonFatal"}]}`}
+	for _, body := range bodies {
+		calls := 0
+		c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(body), nil })
+		if _, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{}); err == nil || calls != 1 {
+			t.Fatal("accepted invalid history", calls)
+		}
+	}
+}
+
+func TestXChatRequestErrorsCancellationAndNoRetry(t *testing.T) {
+	sentinel := errors.New("fixture transport")
+	c := chatReadClient(func(*http.Request) (*http.Response, error) { return nil, sentinel })
+	c.maxRetries = 3
+	if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); !errors.Is(err, sentinel) {
+		t.Fatal("transport cause lost", err)
+	}
+	for _, status := range []int{401, 403, 429, 500} {
+		calls := 0
+		c := chatReadClient(func(*http.Request) (*http.Response, error) {
+			calls++
+			r := chatReadResponse(`{}`)
+			r.StatusCode = status
+			return r, nil
+		})
+		if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+			t.Fatal("retry/error contract", calls)
+		}
+	}
+	calls := 0
+	c = chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return nil, sentinel })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.GetXChatConversation(ctx, "123-456", "123", "456"); !errors.Is(err, context.Canceled) || calls != 0 {
+		t.Fatal("cancelled request dispatched")
+	}
+	for _, cursor := range []string{"0", "-1", "not-sequence", "9223372036854775808"} {
+		if _, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{Cursor: cursor}); !errors.Is(err, ErrInvalidParams) || calls != 0 {
+			t.Fatal("invalid cursor dispatched")
+		}
+	}
+}
+
+func TestXChatRedirectRefusedWithoutSecondRequest(t *testing.T) {
+	calls := 0
+	c := chatReadClient(func(*http.Request) (*http.Response, error) {
+		calls++
+		r := chatReadResponse(`{}`)
+		r.StatusCode = 302
+		r.Header.Set("Location", "https://api.x.com/another")
+		return r, nil
+	})
+	if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+		t.Fatal("redirect issued extra request", calls, err)
+	}
+}
+
+func TestXChatHistoryNativeIdentityAndTerminalBounds(t *testing.T) {
+	duplicate := "a9ad4597-3869-4c76-9d36-7395ac41aa5c"
+	cases := []struct {
+		events []string
+		cursor string
+		more   bool
+	}{
+		{[]string{chatWireEvent("200", "123", "123-456", chatWirePlain("first"), duplicate), chatWireEvent("190", "456", "123-456", chatWirePlain("conflict"), duplicate)}, "", false},
+		{[]string{chatWireEvent("200", "456", "123-456", chatWirePlain("repeat"))}, "200", false},
+		{[]string{chatWireEvent("201", "456", "123-456", chatWirePlain("newer")), chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, "200", false},
+		{[]string{chatWireEvent("201", "456", "123-456", chatWirePlain("newer")), chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, "200", true},
+	}
+	for _, tc := range cases {
+		c := chatReadClient(func(*http.Request) (*http.Response, error) {
+			return chatReadResponse(chatPageFixture(tc.events, tc.more, nil)), nil
+		})
+		if _, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{Cursor: tc.cursor}); err == nil {
+			t.Fatal("accepted contradictory identity/cursor")
+		}
+	}
+	c := chatReadClient(func(*http.Request) (*http.Response, error) {
+		return chatReadResponse(chatPageFixture([]string{chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, false, nil)), nil
+	})
+	page, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{Cursor: "200"})
+	if err != nil || page.Coverage.State != "supported" || page.HasMore || page.NextCursor != "190" {
+		t.Fatal(page, err)
+	}
+}
+func TestXChatMembershipParticipantAndSessionMutation(t *testing.T) {
+	calls := 0
+	c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return nil, errors.New("unexpected HTTP") })
+	conv := chatReadSeal(c)
+	conv.ParticipantIDs[1] = "789"
+	if _, err := c.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); !errors.Is(err, ErrInvalidParams) || calls != 0 {
+		t.Fatal("participant mutation admitted")
+	}
+	conv = chatReadSeal(c)
+	c.restID = "789"
+	if _, err := c.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); !errors.Is(err, ErrInvalidParams) || calls != 0 {
+		t.Fatal("session identity mutation admitted")
+	}
+}
+func TestDMMessageIdentityOptionalJSON(t *testing.T) {
+	old, err := json.Marshal(Message{})
+	if err != nil || strings.Contains(string(old), `"identity"`) {
+		t.Fatal("legacy JSON changed")
+	}
+	message := Message{Identity: &DMMessageIdentity{Protocol: "xchat", NativeMessageID: "a9ad4597-3869-4c76-9d36-7395ac41aa5c", SequenceID: "200", VerificationMode: "server_authenticated", RecipientSource: "authenticated_membership"}}
+	raw, err := json.Marshal(message)
+	var parsed Message
+	if err != nil || json.Unmarshal(raw, &parsed) != nil || parsed.Identity == nil || parsed.Identity.CryptographicVerified || parsed.Identity.SequenceID != "200" || parsed.Identity.NativeMessageID != message.Identity.NativeMessageID {
+		t.Fatal("identity contract changed")
+	}
+}
