@@ -219,6 +219,9 @@ type Message struct {
 	Text           string             `json:"text"`
 	CreatedAt      time.Time          `json:"createdAt"`
 	MediaURLs      []string           `json:"mediaUrls,omitempty"`
+	// ContentEncrypted marks an end-to-end encrypted message: Text is empty and
+	// only server metadata (identity, sender, time) is known.
+	ContentEncrypted bool `json:"contentEncrypted,omitempty"`
 }
 
 // ConversationPage is one page of DM conversations.
