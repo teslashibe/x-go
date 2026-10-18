@@ -159,3 +159,10 @@ func TestConversationReadNoticeClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestDMReadMixedMessageEnvelopeRetainsUnknownGap(t *testing.T) {
+	page, err := parseMessages([]byte(`{"conversation_timeline":{"entries":[{"message":{"id":"9","conversation_id":"2-3","time":"1700000000123","message_data":{"id":"9","sender_id":"2","recipient_id":"3","time":"1700000000123","text":"fixture"}},"unknown":{}}],"status":"AT_END"}}`))
+	if err != nil || len(page.Messages) != 1 || page.Coverage.UnknownEventEntries != 1 || page.Coverage.UnsupportedEntries != 1 {
+		t.Fatal(page.Coverage, err)
+	}
+}

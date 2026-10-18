@@ -301,6 +301,11 @@ func parseMessages(data json.RawMessage) (MessagePage, error) {
 			page.Coverage.UnsupportedEntries++
 			continue
 		}
+		if len(entry) != 1 {
+			page.Coverage.UnknownEventEntries++
+			page.Coverage.UnsupportedEntries++
+			page.Coverage.Reason = "unsupported_event"
+		}
 		var message struct {
 			ID             string `json:"id"`
 			ConversationID string `json:"conversation_id"`
