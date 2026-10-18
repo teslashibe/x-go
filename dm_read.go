@@ -84,6 +84,9 @@ func (c *Client) GetInboxPage(ctx context.Context, opts DMInboxPageOptions) (Con
 // DMReadCoverage describes this response only; supported does not establish a
 // complete mailbox or history window. Pagination remains unverified.
 type DMReadCoverage struct {
+	// Protocol identifies a distinct provider traversal contract. Empty retains
+	// legacy DM semantics; XChat sequence cursors must never enter that reader.
+	Protocol string `json:"protocol,omitempty"`
 	// Membership is unverified until the inbox schema and supported conversation types are live-validated.
 	Membership string `json:"membership"`
 	// CursorState is present, absent_unverified, or exhausted_unverified.

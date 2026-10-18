@@ -13,6 +13,9 @@ package mcp
 //     auth-only helper, convenience wrapper around a more general method,
 //     etc.), add it here with a reason
 var Excluded = map[string]string{
+	"GetXChatConversation":     "low-level private XChat membership read; requires host-owned account authority and per-attempt admission",
+	"GetXChatConversationPage": "low-level paged XChat transport; requires observed membership, host coverage and per-attempt admission",
+
 	// Low-level private history transport is consumed by the host's scoped inbox
 	// workflow; existing first-page DM tools retain their current contracts.
 	"GetConversationPage":  "low-level paged private history; requires host-owned account authority, coverage and per-attempt request admission",
