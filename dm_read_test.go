@@ -181,3 +181,24 @@ func TestDMHistoryReadNoticeMustMatchRequestedConversation(t *testing.T) {
 		}
 	}
 }
+
+func TestDMReadErrorPreservesClassificationAndRendering(t *testing.T) {
+	for _, reason := range []string{"xchat_missing_membership", "fixture_unknown_reason"} {
+		err := dmReadError(reason)
+		var typed *DMReadError
+		if !errors.As(err, &typed) || typed.Reason != reason {
+			t.Fatal("DM reason is not available through errors.As")
+		}
+		if !errors.Is(err, ErrRequestFailed) {
+			t.Fatal("request failure classification lost")
+		}
+		if err.Error() != ErrRequestFailed.Error()+": DM response "+reason {
+			t.Fatal("existing error rendering changed")
+		}
+	}
+	_, err := parseMessages(json.RawMessage(`{}`))
+	var typed *DMReadError
+	if !errors.As(err, &typed) || typed.Reason == "" {
+		t.Fatal("actual DM parser failure is not typed")
+	}
+}

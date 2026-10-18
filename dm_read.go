@@ -164,8 +164,20 @@ func (c *Client) GetConversationPage(ctx context.Context, conversationID string,
 	return page, nil
 }
 
+// DMReadError identifies a rejected DM response shape. Reason is a transport
+// reason code, not provider text. Callers must allowlist it before logging.
+type DMReadError struct {
+	Reason string
+}
+
+func (e *DMReadError) Error() string {
+	return fmt.Sprintf("%s: DM response %s", ErrRequestFailed, e.Reason)
+}
+
+func (e *DMReadError) Unwrap() error { return ErrRequestFailed }
+
 func dmReadError(reason string) error {
-	return fmt.Errorf("%w: DM response %s", ErrRequestFailed, reason)
+	return &DMReadError{Reason: reason}
 }
 
 func dmEnvelope(data json.RawMessage, key string) (map[string]json.RawMessage, error) {

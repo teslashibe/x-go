@@ -2,6 +2,7 @@ package x
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,7 +36,23 @@ func (c *Client) chatGET(ctx context.Context, path string, variables any) (json.
 	if err != nil {
 		return nil, ErrInvalidParams
 	}
+	// Protocol fact: maintained reference 726c742, messaging.go
+	// makeXChatQueryRequest enables WithClientUUID; headers.go sends the
+	// session's once-generated RFC4122 UUID. This is not an account identity.
+	c.chatClientIDOnce.Do(func() {
+		var id [16]byte
+		if _, c.chatClientIDErr = rand.Read(id[:]); c.chatClientIDErr != nil {
+			return
+		}
+		id[6] = (id[6] & 0x0f) | 0x40
+		id[8] = (id[8] & 0x3f) | 0x80
+		c.chatClientID = fmt.Sprintf("%x-%x-%x-%x-%x", id[:4], id[4:6], id[6:8], id[8:10], id[10:])
+	})
+	if c.chatClientIDErr != nil {
+		return nil, fmt.Errorf("%w: XChat client initialization", ErrRequestFailed)
+	}
 	c.setHeaders(req)
+	req.Header.Set("X-Client-UUID", c.chatClientID)
 	req.Header.Set("Origin", "https://x.com")
 	req.Header.Set("Sec-Fetch-Site", "same-site")
 	// A redirect would turn this explicit single read into another physical

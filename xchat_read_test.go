@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -293,5 +294,45 @@ func TestXChatNativeConversationFormatAndUnequalLengthMembers(t *testing.T) {
 	}
 	if !dmConversationID("100-9") || dmConversationID("100:9") {
 		t.Fatal("legacy validator changed")
+	}
+}
+
+func TestXChatClientUUIDIsStablePrivateAndModernOnly(t *testing.T) {
+	valid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	var ids []string
+	c := chatReadClient(func(r *http.Request) (*http.Response, error) {
+		id := r.Header.Get("X-Client-UUID")
+		if !valid.MatchString(id) {
+			t.Fatal("invalid client UUID")
+		}
+		ids = append(ids, id)
+		if strings.HasSuffix(r.URL.Path, "GetInboxPageConversationDataRequestQuery") {
+			return chatReadResponse(chatMembershipFixture), nil
+		}
+		return chatReadResponse(chatPageFixture([]string{}, false, nil)), nil
+	})
+	conv, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != ids[1] {
+		t.Fatal("client UUID changed between membership and history")
+	}
+	legacy, _ := http.NewRequest(http.MethodGet, "https://x.com/i/api/1.1/dm/inbox_initial_state.json", nil)
+	c.setHeaders(legacy)
+	if legacy.Header.Get("X-Client-UUID") != "" {
+		t.Fatal("modern header leaked to legacy headers")
+	}
+	other := chatReadClient(func(r *http.Request) (*http.Response, error) {
+		if !valid.MatchString(r.Header.Get("X-Client-UUID")) || r.Header.Get("X-Client-UUID") == ids[0] {
+			t.Fatal("client UUID reused")
+		}
+		return chatReadResponse(chatMembershipFixture), nil
+	})
+	if _, err = other.GetXChatConversation(context.Background(), "123:456", "123", "456"); err != nil {
+		t.Fatal(err)
 	}
 }
