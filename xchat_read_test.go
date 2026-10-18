@@ -350,7 +350,7 @@ func TestXChatMembershipTypedRejectionReasons(t *testing.T) {
 			c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(tc.body), nil })
 			_, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
 			var typed *DMReadError
-			if calls != 1 || !errors.As(err, &typed) || typed.Reason != tc.reason || !errors.Is(err, ErrRequestFailed) {
+			if calls != 1 || !errors.As(err, &typed) || typed.Reason != tc.reason || typed.Membership == nil || !errors.Is(err, ErrRequestFailed) {
 				t.Fatal("membership classification changed", calls, err)
 			}
 			if err.Error() != ErrRequestFailed.Error()+": DM response "+tc.reason {
@@ -360,5 +360,62 @@ func TestXChatMembershipTypedRejectionReasons(t *testing.T) {
 				t.Fatal("identity leaked into error")
 			}
 		})
+	}
+}
+
+func TestXChatMembershipDiagnosticsBoundedAndPrivate(t *testing.T) {
+	var participants []chatMembershipParticipant
+	if err := json.Unmarshal([]byte(`[{"rest_id":"123","result":{"rest_id":"789"}},{"result":{"rest_id":"456"}},{"rest_id":"PRIVATE_SENTINEL"},{"rest_id":"456"}]`), &participants); err != nil {
+		t.Fatal(err)
+	}
+	d := chatMembershipDiagnostics("123-456", json.RawMessage(` { } `), participants, "123:456", "123", "456")
+	if !d.ConversationIDPresent || d.ConversationIDMatchesRequested || !d.ConversationIDMatchesLegacyPair || d.ParticipantCount != 3 || !d.ParticipantsTruncated || d.ExpectedSenderMatches != 1 || d.ExpectedPeerMatches != 1 || d.ParticipantConflictCount != 1 || d.MissingNumericCount != 1 || d.GroupState != "empty_object" {
+		t.Fatal("bounded diagnostics mismatch")
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"123", "456", "789", "PRIVATE_SENTINEL"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatal("provider value leaked")
+		}
+	}
+	for _, tc := range []struct {
+		id                string
+		requested, legacy bool
+	}{
+		{"456:123", true, false}, {"456-123", false, true}, {"foreign", false, false},
+	} {
+		d := chatMembershipDiagnostics(tc.id, nil, nil, "123:456", "123", "456")
+		if d.ConversationIDMatchesReversedRequested != tc.requested || d.ConversationIDMatchesReversedLegacyPair != tc.legacy {
+			t.Fatal("reversed comparison mismatch")
+		}
+	}
+	for _, tc := range []struct{ raw, state string }{{"", "absent"}, {"null", "null"}, {" null ", "null"}, {"{}", "empty_object"}, {`{"private":"PRIVATE_SENTINEL"}`, "object"}, {`[]`, "other"}, {`{invalid}`, "other"}, {`"PRIVATE_SENTINEL"`, "other"}} {
+		if chatMembershipDiagnostics("", json.RawMessage(tc.raw), nil, "123:456", "123", "456").GroupState != tc.state {
+			t.Fatal("group classification changed")
+		}
+	}
+}
+
+func TestXChatMembershipDiagnosticsOnlyDecodedRejections(t *testing.T) {
+	for _, tc := range []struct {
+		body   string
+		facts  bool
+		reason string
+	}{
+		{`{"data":{"get_inbox_page_conversation_data":null}}`, false, "xchat_missing_membership"},
+		{strings.Replace(chatMembershipFixture, `"conversation_id":"123:456"`, `"conversation_id":"123-456"`, 1), true, "xchat_membership_cid_mismatch"},
+		{strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), true, "xchat_membership_group_present"},
+		{strings.Replace(chatMembershipFixture, `"result":{"rest_id":"456"}`, `"result":{"rest_id":""}`, 1), true, "xchat_missing_participant"},
+	} {
+		calls := 0
+		c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(tc.body), nil })
+		_, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
+		var typed *DMReadError
+		if calls != 1 || !errors.As(err, &typed) || typed.Reason != tc.reason || (typed.Membership != nil) != tc.facts || !errors.Is(err, ErrRequestFailed) {
+			t.Fatal("decoded diagnostic scope changed", err)
+		}
 	}
 }

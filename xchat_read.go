@@ -106,14 +106,9 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 		Result *struct {
 			Data *struct {
 				Detail *struct {
-					ID           string          `json:"conversation_id"`
-					Group        json.RawMessage `json:"group_metadata"`
-					Participants []struct {
-						ID     string `json:"rest_id"`
-						Result *struct {
-							ID string `json:"rest_id"`
-						} `json:"result"`
-					} `json:"participants_results"`
+					ID           string                      `json:"conversation_id"`
+					Group        json.RawMessage             `json:"group_metadata"`
+					Participants []chatMembershipParticipant `json:"participants_results"`
 				} `json:"conversation_detail"`
 			} `json:"data"`
 		} `json:"get_inbox_page_conversation_data"`
@@ -122,33 +117,36 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 		return XChatConversation{}, dmReadError("xchat_missing_membership")
 	}
 	detail := body.Result.Data.Detail
+	membershipError := func(reason string) error {
+		return &DMReadError{Reason: reason, Membership: chatMembershipDiagnostics(detail.ID, detail.Group, detail.Participants, conversationID, senderID, peerID)}
+	}
 	if detail.ID != conversationID {
-		return XChatConversation{}, dmReadError("xchat_membership_cid_mismatch")
+		return XChatConversation{}, membershipError("xchat_membership_cid_mismatch")
 	}
 	if len(detail.Participants) != 2 {
-		return XChatConversation{}, dmReadError("xchat_membership_participant_count")
+		return XChatConversation{}, membershipError("xchat_membership_participant_count")
 	}
 	if len(detail.Group) > 0 && string(detail.Group) != "null" {
-		return XChatConversation{}, dmReadError("xchat_membership_group_present")
+		return XChatConversation{}, membershipError("xchat_membership_group_present")
 	}
 	ids := make([]string, 0, 2)
 	for _, p := range detail.Participants {
 		id := p.ID
 		if p.Result != nil {
 			if id != "" && p.Result.ID != "" && id != p.Result.ID {
-				return XChatConversation{}, dmReadError("xchat_membership_participant_conflict")
+				return XChatConversation{}, membershipError("xchat_membership_participant_conflict")
 			}
 			if id == "" {
 				id = p.Result.ID
 			}
 		}
 		if !dmNumericID(id) {
-			return XChatConversation{}, dmReadError("xchat_missing_participant")
+			return XChatConversation{}, membershipError("xchat_missing_participant")
 		}
 		ids = append(ids, id)
 	}
 	if !(ids[0] == senderID && ids[1] == peerID || ids[1] == senderID && ids[0] == peerID) {
-		return XChatConversation{}, dmReadError("xchat_membership_pair_mismatch")
+		return XChatConversation{}, membershipError("xchat_membership_pair_mismatch")
 	}
 	return XChatConversation{ID: conversationID, SenderID: senderID, PeerID: peerID, ParticipantIDs: ids, client: c, conversation: conversationID, sender: senderID, peer: peerID}, nil
 }
@@ -299,4 +297,72 @@ func chatSequenceLess(a, b string) bool {
 func chatConversationID(id, sender, peer string) bool {
 	parts := strings.Split(id, ":")
 	return len(parts) == 2 && dmNumericID(parts[0]) && dmNumericID(parts[1]) && parts[0][0] != '0' && parts[1][0] != '0' && parts[0] < parts[1] && (parts[0] == sender && parts[1] == peer || parts[0] == peer && parts[1] == sender)
+}
+
+// XChatMembershipDiagnostics contains only bounded comparisons and counts from
+// a rejected decoded membership response. It never authenticates membership.
+type XChatMembershipDiagnostics struct {
+	ConversationIDPresent                   bool
+	ConversationIDMatchesRequested          bool
+	ConversationIDMatchesLegacyPair         bool
+	ConversationIDMatchesReversedRequested  bool
+	ConversationIDMatchesReversedLegacyPair bool
+	ParticipantCount                        int
+	ParticipantsTruncated                   bool
+	ExpectedSenderMatches                   int
+	ExpectedPeerMatches                     int
+	ParticipantConflictCount                int
+	MissingNumericCount                     int
+	GroupState                              string
+}
+
+type chatMembershipParticipant struct {
+	ID     string `json:"rest_id"`
+	Result *struct {
+		ID string `json:"rest_id"`
+	} `json:"result"`
+}
+
+func chatMembershipDiagnostics(id string, group json.RawMessage, participants []chatMembershipParticipant, requested, sender, peer string) *XChatMembershipDiagnostics {
+	parts := strings.Split(requested, ":")
+	reversed := ""
+	if len(parts) == 2 {
+		reversed = parts[1] + ":" + parts[0]
+	}
+	d := &XChatMembershipDiagnostics{ConversationIDPresent: id != "", ConversationIDMatchesRequested: id == requested, ConversationIDMatchesLegacyPair: id == strings.ReplaceAll(requested, ":", "-"), ConversationIDMatchesReversedRequested: reversed != "" && id == reversed, ConversationIDMatchesReversedLegacyPair: reversed != "" && id == strings.ReplaceAll(reversed, ":", "-"), ParticipantCount: min(len(participants), 3), ParticipantsTruncated: len(participants) > 3, GroupState: "other"}
+	raw := strings.TrimSpace(string(group))
+	switch {
+	case len(group) == 0:
+		d.GroupState = "absent"
+	case raw == "null":
+		d.GroupState = "null"
+	default:
+		if len(raw) >= 2 && raw[0] == '{' && raw[len(raw)-1] == '}' && json.Valid(group) {
+			d.GroupState = "object"
+			if strings.TrimSpace(raw[1:len(raw)-1]) == "" {
+				d.GroupState = "empty_object"
+			}
+		}
+	}
+	for _, p := range participants[:min(len(participants), 3)] {
+		resolved := p.ID
+		if p.Result != nil {
+			if p.ID != "" && p.Result.ID != "" && p.ID != p.Result.ID {
+				d.ParticipantConflictCount++
+			}
+			if resolved == "" {
+				resolved = p.Result.ID
+			}
+		}
+		if !dmNumericID(resolved) {
+			d.MissingNumericCount++
+		}
+		if resolved == sender {
+			d.ExpectedSenderMatches++
+		}
+		if resolved == peer {
+			d.ExpectedPeerMatches++
+		}
+	}
+	return d
 }
