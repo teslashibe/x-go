@@ -123,11 +123,16 @@ func (c *Client) GetXChatConversation(ctx context.Context, conversationID, sende
 	if detail.ID != conversationID {
 		return XChatConversation{}, membershipError("xchat_membership_cid_mismatch")
 	}
-	if len(detail.Participants) != 2 {
-		return XChatConversation{}, membershipError("xchat_membership_participant_count")
-	}
 	if len(detail.Group) > 0 && string(detail.Group) != "null" {
 		return XChatConversation{}, membershipError("xchat_membership_group_present")
+	}
+	// X omits participants for some one-to-one chats. The canonical ID already
+	// names exactly the sender and peer, and only the sender's session returned it.
+	if len(detail.Participants) == 0 {
+		return XChatConversation{ID: conversationID, SenderID: senderID, PeerID: peerID, ParticipantIDs: []string{senderID, peerID}, client: c, conversation: conversationID, sender: senderID, peer: peerID}, nil
+	}
+	if len(detail.Participants) != 2 {
+		return XChatConversation{}, membershipError("xchat_membership_participant_count")
 	}
 	ids := make([]string, 0, 2)
 	for _, p := range detail.Participants {

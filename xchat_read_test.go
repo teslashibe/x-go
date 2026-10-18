@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -340,7 +341,9 @@ func TestXChatClientUUIDIsStablePrivateAndModernOnly(t *testing.T) {
 func TestXChatMembershipTypedRejectionReasons(t *testing.T) {
 	for _, tc := range []struct{ name, body, reason string }{
 		{"cid", strings.Replace(chatMembershipFixture, `"conversation_id":"123:456"`, `"conversation_id":"123:789"`, 1), "xchat_membership_cid_mismatch"},
-		{"count", `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:456","participants_results":[]}}}}}`, "xchat_membership_participant_count"},
+		{"count", `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:456","participants_results":[{"rest_id":"123"}]}}}}}`, "xchat_membership_participant_count"},
+		{"empty group", `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:456","group_metadata":{},"participants_results":[]}}}}}`, "xchat_membership_group_present"},
+		{"empty cid", `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:789","participants_results":[]}}}}}`, "xchat_membership_cid_mismatch"},
 		{"group", strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), "xchat_membership_group_present"},
 		{"conflict", strings.Replace(chatMembershipFixture, `"rest_id":"123","result":{"rest_id":"123"}`, `"rest_id":"123","result":{"rest_id":"789"}`, 1), "xchat_membership_participant_conflict"},
 		{"pair", strings.ReplaceAll(chatMembershipFixture, `"456"`, `"789"`), "xchat_membership_pair_mismatch"},
@@ -416,6 +419,21 @@ func TestXChatMembershipDiagnosticsOnlyDecodedRejections(t *testing.T) {
 		var typed *DMReadError
 		if calls != 1 || !errors.As(err, &typed) || typed.Reason != tc.reason || (typed.Membership != nil) != tc.facts || !errors.Is(err, ErrRequestFailed) {
 			t.Fatal("decoded diagnostic scope changed", err)
+		}
+	}
+}
+
+func TestXChatMembershipAcceptsCanonicalOneToOneWithoutParticipants(t *testing.T) {
+	for _, detail := range []string{`"conversation_id":"123:456","participants_results":[]`, `"conversation_id":"123:456"`, `"conversation_id":"123:456","group_metadata":null`} {
+		body := `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{` + detail + `}}}}}`
+		calls := 0
+		c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(body), nil })
+		conv, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
+		if err != nil || calls != 1 || !reflect.DeepEqual(conv, chatReadSeal(c)) {
+			t.Fatal("canonical one-to-one membership refused", err)
+		}
+		if _, err = c.GetXChatConversation(context.Background(), "123:456", "123", "789"); !errors.Is(err, ErrInvalidParams) || calls != 1 {
+			t.Fatal("non-member pair dispatched")
 		}
 	}
 }
