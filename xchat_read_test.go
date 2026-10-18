@@ -23,10 +23,10 @@ func chatReadResponse(body string) *http.Response {
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
-const chatMembershipFixture = `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123-456","participants_results":[{"rest_id":"123","result":{"rest_id":"123"}},{"result":{"rest_id":"456"}}]}}}}}`
+const chatMembershipFixture = `{"data":{"get_inbox_page_conversation_data":{"data":{"conversation_detail":{"conversation_id":"123:456","participants_results":[{"rest_id":"123","result":{"rest_id":"123"}},{"result":{"rest_id":"456"}}]}}}}}`
 
 func chatReadSeal(c *Client) XChatConversation {
-	return XChatConversation{ID: "123-456", SenderID: "123", PeerID: "456", ParticipantIDs: []string{"123", "456"}, client: c, conversation: "123-456", sender: "123", peer: "456"}
+	return XChatConversation{ID: "123:456", SenderID: "123", PeerID: "456", ParticipantIDs: []string{"123", "456"}, client: c, conversation: "123:456", sender: "123", peer: "456"}
 }
 
 // Independent synthetic TBinary event construction from official MIT schema.
@@ -71,16 +71,16 @@ func TestXChatMembershipExactRequestAndSeal(t *testing.T) {
 			t.Fatal("wrong native request")
 		}
 		var vars map[string]any
-		if json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars) != nil || len(vars) != 2 || vars["conversation_id"] != "123-456" || vars["include_user_public_keys"] != false {
+		if json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars) != nil || len(vars) != 2 || vars["conversation_id"] != "123:456" || vars["include_user_public_keys"] != false {
 			t.Fatal("wrong variables")
 		}
 		return chatReadResponse(chatMembershipFixture), nil
 	})
-	conv, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456")
+	conv, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456")
 	if err != nil || len(conv.ParticipantIDs) != 2 || calls != 1 {
 		t.Fatal(conv, err, calls)
 	}
-	conv.ID = "123-789"
+	conv.ID = "123:789"
 	if _, err = c.GetXChatConversationPage(context.Background(), conv, XChatPageOptions{}); !errors.Is(err, ErrInvalidParams) || calls != 1 {
 		t.Fatal("mutated membership dispatched")
 	}
@@ -92,11 +92,11 @@ func TestXChatMembershipExactRequestAndSeal(t *testing.T) {
 }
 
 func TestXChatMembershipRejectsMismatches(t *testing.T) {
-	cases := []string{strings.Replace(chatMembershipFixture, `"conversation_id":"123-456"`, `"conversation_id":"123-789"`, 1), strings.Replace(chatMembershipFixture, `"rest_id":"456"`, `"rest_id":"789"`, 1), strings.Replace(chatMembershipFixture, `"result":{"rest_id":"456"}`, `"rest_id":"123"`, 1), strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), `{"data":{"get_inbox_page_conversation_data":null}}`}
+	cases := []string{strings.Replace(chatMembershipFixture, `"conversation_id":"123:456"`, `"conversation_id":"123:789"`, 1), strings.Replace(chatMembershipFixture, `"rest_id":"456"`, `"rest_id":"789"`, 1), strings.Replace(chatMembershipFixture, `"result":{"rest_id":"456"}`, `"rest_id":"123"`, 1), strings.Replace(chatMembershipFixture, `"participants_results":`, `"group_metadata":{},"participants_results":`, 1), `{"data":{"get_inbox_page_conversation_data":null}}`}
 	for _, body := range cases {
 		calls := 0
 		c := chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return chatReadResponse(body), nil })
-		if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+		if _, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456"); err == nil || calls != 1 {
 			t.Fatal("accepted mismatched membership")
 		}
 	}
@@ -104,7 +104,7 @@ func TestXChatMembershipRejectsMismatches(t *testing.T) {
 
 func TestXChatHistoryRequestPlaintextAndPagination(t *testing.T) {
 	calls := 0
-	events := []string{chatWireEvent("200", "456", "123-456", chatWirePlain("synthetic text")), chatWireEvent("190", "123", "123-456", chatWireStruct(chatWireField(12, 6, chatWireStruct())))}
+	events := []string{chatWireEvent("200", "456", "123:456", chatWirePlain("synthetic text")), chatWireEvent("190", "123", "123:456", chatWireStruct(chatWireField(12, 6, chatWireStruct())))}
 	c := chatReadClient(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.Method != "GET" || r.URL.Host != "api.x.com" || r.URL.Path != "/graphql/"+chatHistoryPath {
@@ -112,7 +112,7 @@ func TestXChatHistoryRequestPlaintextAndPagination(t *testing.T) {
 		}
 		var vars map[string]any
 		_ = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars)
-		if len(vars) != 4 || vars["conversation_id"] != "123-456" || vars["min_local_sequence_id"] != chatInitialSequence || vars["min_conversation_key_version"] != chatInitialSequence {
+		if len(vars) != 4 || vars["conversation_id"] != "123:456" || vars["min_local_sequence_id"] != chatInitialSequence || vars["min_conversation_key_version"] != chatInitialSequence {
 			t.Fatal("wrong history variables")
 		}
 		settings := vars["query_settings"].(map[string]any)
@@ -133,7 +133,7 @@ func TestXChatHistoryEncryptedUnknownAndStalled(t *testing.T) {
 		events         []string
 		more           bool
 		cursor, reason string
-	}{{[]string{chatWireEvent("200", "456", "123-456", encrypted)}, false, "", "xchat_encrypted_content"}, {[]string{"not-base64"}, true, "", "xchat_cursor_stalled"}} {
+	}{{[]string{chatWireEvent("200", "456", "123:456", encrypted)}, false, "", "xchat_encrypted_content"}, {[]string{"not-base64"}, true, "", "xchat_cursor_stalled"}} {
 		c := chatReadClient(func(*http.Request) (*http.Response, error) {
 			return chatReadResponse(chatPageFixture(tc.events, tc.more, nil)), nil
 		})
@@ -150,7 +150,7 @@ func TestXChatHistoryEncryptedUnknownAndStalled(t *testing.T) {
 }
 
 func TestXChatHistoryIdentityAndMalformedPages(t *testing.T) {
-	bodies := []string{chatPageFixture([]string{chatWireEvent("200", "789", "123-456", chatWirePlain("wrong sender"))}, false, nil), chatPageFixture([]string{chatWireEvent("200", "456", "123-789", chatWirePlain("wrong conversation"))}, false, nil), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":null}}}`, `{"data":{"get_conversation_page":{"has_more":false}}}`, `{"data":{"get_conversation_page":null}}`, strings.Repeat("x", maxResponseBody+1), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":false}},"errors"
+	bodies := []string{chatPageFixture([]string{chatWireEvent("200", "789", "123:456", chatWirePlain("wrong sender"))}, false, nil), chatPageFixture([]string{chatWireEvent("200", "456", "123:789", chatWirePlain("wrong conversation"))}, false, nil), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":null}}}`, `{"data":{"get_conversation_page":{"has_more":false}}}`, `{"data":{"get_conversation_page":null}}`, strings.Repeat("x", maxResponseBody+1), `{"data":{"get_conversation_page":{"encoded_message_events":[],"has_more":false}},"errors"
  "fmt":[{"message":"partial","kind":"NonFatal"}]}`}
 	for _, body := range bodies {
 		calls := 0
@@ -165,7 +165,7 @@ func TestXChatRequestErrorsCancellationAndNoRetry(t *testing.T) {
 	sentinel := errors.New("fixture transport")
 	c := chatReadClient(func(*http.Request) (*http.Response, error) { return nil, sentinel })
 	c.maxRetries = 3
-	if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); !errors.Is(err, sentinel) {
+	if _, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456"); !errors.Is(err, sentinel) {
 		t.Fatal("transport cause lost", err)
 	}
 	for _, status := range []int{401, 403, 429, 500} {
@@ -176,7 +176,7 @@ func TestXChatRequestErrorsCancellationAndNoRetry(t *testing.T) {
 			r.StatusCode = status
 			return r, nil
 		})
-		if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+		if _, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456"); err == nil || calls != 1 {
 			t.Fatal("retry/error contract", calls)
 		}
 	}
@@ -184,7 +184,7 @@ func TestXChatRequestErrorsCancellationAndNoRetry(t *testing.T) {
 	c = chatReadClient(func(*http.Request) (*http.Response, error) { calls++; return nil, sentinel })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.GetXChatConversation(ctx, "123-456", "123", "456"); !errors.Is(err, context.Canceled) || calls != 0 {
+	if _, err := c.GetXChatConversation(ctx, "123:456", "123", "456"); !errors.Is(err, context.Canceled) || calls != 0 {
 		t.Fatal("cancelled request dispatched")
 	}
 	for _, cursor := range []string{"0", "-1", "not-sequence", "9223372036854775808"} {
@@ -203,7 +203,7 @@ func TestXChatRedirectRefusedWithoutSecondRequest(t *testing.T) {
 		r.Header.Set("Location", "https://api.x.com/another")
 		return r, nil
 	})
-	if _, err := c.GetXChatConversation(context.Background(), "123-456", "123", "456"); err == nil || calls != 1 {
+	if _, err := c.GetXChatConversation(context.Background(), "123:456", "123", "456"); err == nil || calls != 1 {
 		t.Fatal("redirect issued extra request", calls, err)
 	}
 }
@@ -215,10 +215,10 @@ func TestXChatHistoryNativeIdentityAndTerminalBounds(t *testing.T) {
 		cursor string
 		more   bool
 	}{
-		{[]string{chatWireEvent("200", "123", "123-456", chatWirePlain("first"), duplicate), chatWireEvent("190", "456", "123-456", chatWirePlain("conflict"), duplicate)}, "", false},
-		{[]string{chatWireEvent("200", "456", "123-456", chatWirePlain("repeat"))}, "200", false},
-		{[]string{chatWireEvent("201", "456", "123-456", chatWirePlain("newer")), chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, "200", false},
-		{[]string{chatWireEvent("201", "456", "123-456", chatWirePlain("newer")), chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, "200", true},
+		{[]string{chatWireEvent("200", "123", "123:456", chatWirePlain("first"), duplicate), chatWireEvent("190", "456", "123:456", chatWirePlain("conflict"), duplicate)}, "", false},
+		{[]string{chatWireEvent("200", "456", "123:456", chatWirePlain("repeat"))}, "200", false},
+		{[]string{chatWireEvent("201", "456", "123:456", chatWirePlain("newer")), chatWireEvent("190", "456", "123:456", chatWirePlain("older"))}, "200", false},
+		{[]string{chatWireEvent("201", "456", "123:456", chatWirePlain("newer")), chatWireEvent("190", "456", "123:456", chatWirePlain("older"))}, "200", true},
 	}
 	for _, tc := range cases {
 		c := chatReadClient(func(*http.Request) (*http.Response, error) {
@@ -229,7 +229,7 @@ func TestXChatHistoryNativeIdentityAndTerminalBounds(t *testing.T) {
 		}
 	}
 	c := chatReadClient(func(*http.Request) (*http.Response, error) {
-		return chatReadResponse(chatPageFixture([]string{chatWireEvent("190", "456", "123-456", chatWirePlain("older"))}, false, nil)), nil
+		return chatReadResponse(chatPageFixture([]string{chatWireEvent("190", "456", "123:456", chatWirePlain("older"))}, false, nil)), nil
 	})
 	page, err := c.GetXChatConversationPage(context.Background(), chatReadSeal(c), XChatPageOptions{Cursor: "200"})
 	if err != nil || page.Coverage.State != "supported" || page.HasMore || page.NextCursor != "190" {
@@ -260,5 +260,38 @@ func TestDMMessageIdentityOptionalJSON(t *testing.T) {
 	var parsed Message
 	if err != nil || json.Unmarshal(raw, &parsed) != nil || parsed.Identity == nil || parsed.Identity.CryptographicVerified || parsed.Identity.SequenceID != "200" || parsed.Identity.NativeMessageID != message.Identity.NativeMessageID {
 		t.Fatal("identity contract changed")
+	}
+}
+
+func TestXChatNativeConversationFormatAndUnequalLengthMembers(t *testing.T) {
+	calls := 0
+	c := chatReadClient(nil)
+	c.restID = "100"
+	c.httpClient.Transport = chatReadTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var vars map[string]any
+		_ = json.Unmarshal([]byte(r.URL.Query().Get("variables")), &vars)
+		if vars["conversation_id"] != "100:9" {
+			t.Fatal("native ID rewritten")
+		}
+		body := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(chatMembershipFixture, "123:456", "100:9"), `"123"`, `"100"`), `"456"`, `"9"`)
+		return chatReadResponse(body), nil
+	})
+	conv, err := c.GetXChatConversation(context.Background(), "100:9", "100", "9")
+	if err != nil || conv.ID != "100:9" || calls != 1 {
+		t.Fatal(conv, err, calls)
+	}
+	for _, bad := range []string{"100-9", "9:100", "100:8", "100:100", "0100:9", "100:9:8"} {
+		if _, err := c.GetXChatConversation(context.Background(), bad, "100", "9"); !errors.Is(err, ErrInvalidParams) || calls != 1 {
+			t.Fatal("invalid/foreign/alias conversation dispatched", bad, err)
+		}
+	}
+	for _, bad := range []string{"00", "0400", "0001"} {
+		if chatSequence(bad) {
+			t.Fatal("sequence alias accepted", bad)
+		}
+	}
+	if !dmConversationID("100-9") || dmConversationID("100:9") {
+		t.Fatal("legacy validator changed")
 	}
 }
