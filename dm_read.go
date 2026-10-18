@@ -301,7 +301,11 @@ func parseMessages(data json.RawMessage) (MessagePage, error) {
 	for _, entry := range entries {
 		raw, ok := entry["message"]
 		if !ok {
-			if cid := knownConversationRead(entry); cid != "" {
+			cid := knownConversationRead(entry)
+			if cid == "" {
+				cid = knownCallEnd(entry)
+			}
+			if cid != "" {
 				page.noticeConversationIDs = append(page.noticeConversationIDs, cid)
 				page.Coverage.KnownNoticeEntries++
 				continue
