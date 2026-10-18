@@ -167,7 +167,8 @@ func (c *Client) GetConversationPage(ctx context.Context, conversationID string,
 // DMReadError identifies a rejected DM response shape. Reason is a transport
 // reason code, not provider text. Callers must allowlist it before logging.
 type DMReadError struct {
-	Reason string
+	Reason     string
+	Membership *XChatMembershipDiagnostics
 }
 
 func (e *DMReadError) Error() string {
