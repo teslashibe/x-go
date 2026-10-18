@@ -433,7 +433,7 @@ func knownConversationRead(entry map[string]json.RawMessage) bool {
 		Time            string `json:"time"`
 		LastReadEventID string `json:"last_read_event_id"`
 	}
-	if json.Unmarshal(raw, &notice) != nil || !dmNumericID(notice.ID) || strings.TrimSpace(notice.ConversationID) == "" || !dmNumericID(notice.LastReadEventID) {
+	if json.Unmarshal(raw, &notice) != nil || !dmNumericID(notice.ID) || !dmConversationID(notice.ConversationID) || !dmNumericID(notice.LastReadEventID) {
 		return false
 	}
 	millis, err := strconv.ParseInt(notice.Time, 10, 64)

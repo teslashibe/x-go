@@ -136,6 +136,7 @@ func TestConversationReadNoticeClassification(t *testing.T) {
 		known       bool
 	}{
 		{"read", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"1700000000000","last_read_event_id":"899"}}`, true},
+		{"garbage_identity", `{"conversation_read":{"id":"900","conversation_id":"garbage","time":"1700000000000","last_read_event_id":"899"}}`, false},
 		{"missing_identity", `{"conversation_read":{"id":"900","time":"1700000000000","last_read_event_id":"899"}}`, false},
 		{"bad_time", `{"conversation_read":{"id":"900","conversation_id":"123-456","time":"bad","last_read_event_id":"899"}}`, false},
 		{"unknown", `{"conversation_create":{"id":"900"}}`, false},
