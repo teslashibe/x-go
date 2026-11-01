@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// Typed writes (LikePost ... UnblockUser, DeletePost) share one transport and
-// one set of outcome rules:
+// Typed writes (LikePost ... UnblockUser, DeletePost, and the list mutations
+// in list_write.go) share one transport and one set of outcome rules:
 //
 //   - Exactly one request, never retried, sent through a per-call client that
 //     refuses redirects. The shared client used by Like, Follow, DeleteTweet
@@ -252,16 +252,31 @@ func (c *Client) graphqlWrite(ctx context.Context, op gqlWriteOp, id string) (Wr
 	if !xNumericID(id) {
 		return WriteResult{}, notAttempted(op.method, ErrInvalidParams)
 	}
-	qid := c.queryID(op.operation)
-	if qid == "" {
-		return WriteResult{}, notAttempted(op.method, ErrQueryIDUnavailable)
-	}
-	if err := ctx.Err(); err != nil {
-		return WriteResult{}, notAttempted(op.method, err)
-	}
 	vars := map[string]interface{}{op.idVar: id}
 	for k, v := range op.extra {
 		vars[k] = v
+	}
+	data, status, err := c.sendGraphQLWrite(ctx, op.method, op.operation, vars)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if op.ackRoot == "" || !usableData(data, op.ackRoot) {
+		return WriteResult{}, ambiguousWrite(op.method, status, 0, errUnconfirmedWrite)
+	}
+	return WriteResult{Operation: op.method, TargetID: id, State: WriteApplied}, nil
+}
+
+// sendGraphQLWrite sends one typed GraphQL write for method and returns the
+// data of a 200 response that carries no errors, with its status. It applies
+// every outcome rule except the ack check, which belongs to the caller; each
+// failure is an *OutcomeError.
+func (c *Client) sendGraphQLWrite(ctx context.Context, method, operation string, vars map[string]interface{}) (json.RawMessage, int, error) {
+	qid := c.queryID(operation)
+	if qid == "" {
+		return nil, 0, notAttempted(method, ErrQueryIDUnavailable)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, notAttempted(method, err)
 	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"variables": vars,
@@ -269,39 +284,36 @@ func (c *Client) graphqlWrite(ctx context.Context, op gqlWriteOp, id string) (Wr
 		"queryId":   qid,
 	})
 	if err != nil {
-		return WriteResult{}, notAttempted(op.method, fmt.Errorf("%w: marshalling body: %v", ErrInvalidParams, err))
+		return nil, 0, notAttempted(method, fmt.Errorf("%w: marshalling body: %v", ErrInvalidParams, err))
 	}
-	endpoint := fmt.Sprintf("%s/%s/%s", graphqlBase, qid, op.operation)
+	endpoint := fmt.Sprintf("%s/%s/%s", graphqlBase, qid, operation)
 	r, notSent, err := c.sendOnce(ctx, http.MethodPost, endpoint, "application/json", payload)
 	if notSent {
-		return WriteResult{}, notAttempted(op.method, err)
+		return nil, 0, notAttempted(method, err)
 	}
 	if err != nil {
-		return WriteResult{}, ambiguousWrite(op.method, 0, 0, err)
+		return nil, 0, ambiguousWrite(method, 0, 0, err)
 	}
 	if err, uncertain := c.statusError(r, true); err != nil {
 		if uncertain {
-			return WriteResult{}, ambiguousWrite(op.method, r.status, firstXErrorCode(r.body), err)
+			return nil, r.status, ambiguousWrite(method, r.status, firstXErrorCode(r.body), err)
 		}
-		return WriteResult{}, classifiedWrite(op.method, r.status, firstXErrorCode(r.body), err)
+		return nil, r.status, classifiedWrite(method, r.status, firstXErrorCode(r.body), err)
 	}
 	envelope, err := decodeGQLResponse(r.body)
 	if err != nil {
-		return WriteResult{}, ambiguousWrite(op.method, r.status, 0, err)
+		return nil, r.status, ambiguousWrite(method, r.status, 0, err)
 	}
 	if len(envelope.Errors) > 0 {
 		code := envelope.Errors[0].code()
 		gqlErr := c.rateLimited(classifyGQLError(envelope.Errors[0]), r.resp.Header)
 		if usableData(envelope.Data, "") {
 			// Data next to errors: the write may have run.
-			return WriteResult{}, ambiguousWrite(op.method, r.status, code, gqlErr)
+			return nil, r.status, ambiguousWrite(method, r.status, code, gqlErr)
 		}
-		return WriteResult{}, classifiedWrite(op.method, r.status, code, gqlErr)
+		return nil, r.status, classifiedWrite(method, r.status, code, gqlErr)
 	}
-	if op.ackRoot == "" || !usableData(envelope.Data, op.ackRoot) {
-		return WriteResult{}, ambiguousWrite(op.method, r.status, 0, errUnconfirmedWrite)
-	}
-	return WriteResult{Operation: op.method, TargetID: id, State: WriteApplied}, nil
+	return envelope.Data, r.status, nil
 }
 
 // formWrite sends one typed REST form POST and applies the outcome rules.

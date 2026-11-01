@@ -416,6 +416,37 @@ if state.Kind == x.PostPresent && state.Tweet.Viewer != nil {
 rel, _ := c.GetUserRelationship(ctx, userID) // Following, FollowedBy, Muting, ...
 ```
 
+### List mutations
+
+```go
+res, err := c.CreateList(ctx, x.ListInput{Name: "Agents", Description: "", Private: true})
+// on success res.TargetID is the new list's ID
+_, err = c.UpdateList(ctx, listID, x.ListInput{Name: "Agents", Private: false}) // full replacement
+_, err = c.DeleteList(ctx, listID)
+_, err = c.AddListMember(ctx, listID, userID)
+_, err = c.RemoveListMember(ctx, listID, userID)
+_, err = c.SubscribeList(ctx, listID)
+_, err = c.UnsubscribeList(ctx, listID)
+
+if errors.Is(err, x.ErrQueryIDUnavailable) { /* no query id for this operation; nothing was sent */ }
+```
+
+Each returns an `x.WriteResult` (`TargetID` is the list ID; for `CreateList`
+it is the new list's ID) and follows the typed write rules above: exactly one
+request, no retries, redirects refused as ambiguous, `{"data":{}}`
+ambiguous, and every failure an `*x.OutcomeError`.
+
+No query id for any list mutation ships in the defaults: query ids enter
+`defaultQueryIDs` only from a Live capture. Until then each method returns an
+`*x.OutcomeError` that is `NotAttempted` and matches
+`x.ErrQueryIDUnavailable`, without sending a request. The operation names,
+variables and ack shapes follow X's web client but are provisional: a write is
+applied only with no errors and a captured ack, so until the capture a clean
+response is ambiguous. A `CreateList` ack without a list ID, or any other
+list ack naming a different list, is ambiguous. `ListInput` requires a
+non-blank name and valid UTF-8; the name and description length limits wait
+for the capture.
+
 ### Direct messages
 
 ```go
@@ -606,7 +637,7 @@ Changes in v1.15.0 for existing callers:
 
 ## MCP support
 
-This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 45 tools cover the full client API: profile fetch (handle/ID/me), follower/following graph, home + latest timelines, tweet fetch + thread, user-tweet feed, simple/user/advanced search, tweet compose (create/reply/quote/delete), engagement (like/unlike/retweet/unretweet/bookmark/unbookmark), social graph writes (follow/unfollow/mute/unmute/block/unblock), DMs (list/read/send/cold-send), lists (metadata/timeline/members), timeline trend analysis, and account collections (`x_get_bookmarks`, `x_get_liked_posts`, `x_get_muted_users`, `x_get_blocked_users`, `x_get_owned_lists`, `x_get_subscribed_lists`), whose pages also carry `coverage`.
+This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 52 tools cover the full client API: profile fetch (handle/ID/me), follower/following graph, home + latest timelines, tweet fetch + thread, user-tweet feed, simple/user/advanced search, tweet compose (create/reply/quote/delete), engagement (like/unlike/retweet/unretweet/bookmark/unbookmark), social graph writes (follow/unfollow/mute/unmute/block/unblock), DMs (list/read/send/cold-send), lists (metadata/timeline/members), timeline trend analysis, and account collections (`x_get_bookmarks`, `x_get_liked_posts`, `x_get_muted_users`, `x_get_blocked_users`, `x_get_owned_lists`, `x_get_subscribed_lists`), whose pages also carry `coverage`, and list mutations (`x_create_list`, `x_update_list`, `x_delete_list`, `x_add_list_member`, `x_remove_list_member`, `x_subscribe_list`, `x_unsubscribe_list`), which return the typed write outcome.
 
 ```go
 import (
