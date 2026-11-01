@@ -138,6 +138,9 @@ func (c *Client) doGraphQLGET(ctx context.Context, qid, operationName string, va
 	if parseErr == nil {
 		data, parseErr = readGQLData(body, envelope)
 	}
+	if parseErr == nil {
+		notePartialErrors(ctx, envelope)
+	}
 	if errors.Is(parseErr, ErrRateLimited) {
 		wait := parseRetryAfter(resp.Header.Get("Retry-After"), 0)
 		if wait == 0 {

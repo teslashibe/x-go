@@ -252,6 +252,54 @@ members, _ := c.GetListMembers(ctx, listID, 20)
 tweets, _ = c.GetListTimelinePage(ctx, listID, 20, tweets.NextCursor)
 ```
 
+`List.OwnerScreenName` is the owner's `legacy.screen_name`.
+`List.SubscriberCount`, `List.ViewerSubscribed` and `List.CreatedAt` are not
+mapped yet: their JSON paths wait for a Live capture, so they stay `0`, `nil`
+(unknown, never "no") and the zero time. `GetList` still sends `listId` to
+`ListBySlug`.
+
+### Account collections and page coverage
+
+```go
+bookmarks, err := c.GetBookmarksPage(ctx, 20, "")
+liked, err := c.GetLikedPostsPage(ctx, myID, 20, "")
+muted, err := c.GetMutedUsersPage(ctx, 20, "")
+blocked, err := c.GetBlockedUsersPage(ctx, 20, "")
+owned, err := c.GetOwnedListsPage(ctx, myID, 20, "")         // ListPage
+subscribed, err := c.GetSubscribedListsPage(ctx, 20, "")     // ListPage
+
+if errors.Is(err, x.ErrQueryIDUnavailable) { /* no query id for this operation */ }
+```
+
+No query id for these operations ships in the defaults: query ids enter
+`defaultQueryIDs` only from a Live capture. Until then each method returns a
+`*QueryIDUnavailableError` (matching `ErrQueryIDUnavailable`) without sending
+a request, unless the caller supplies an id through `WithQueryIDs` or
+`RefreshQueryIDs`. Their operation names and response paths are provisional
+and are confirmed with the capture. Each sends at most one request and never
+retries: a throttle returns `*RateLimitError` with the cooldown recorded, and
+a non-JSON HTTP 404 (how X answers an unknown query id) returns an
+`*OperationError` matching `ErrQueryIDStale`, not `ErrNotFound`.
+
+`TweetPage`, `UserPage` and `ListPage` carry `Coverage`. `HasNext` keeps its
+meaning (X sent a Bottom cursor); `Coverage.End` says what that is worth:
+
+| `PageEnd` | Meaning |
+|---|---|
+| `stalled` | the Bottom cursor equals the cursor the request sent |
+| `end_verified` | no Bottom cursor and a terminal instruction on an operation a Live capture has proven (none yet, so no page reports it today) |
+| `empty` | no items and none dropped |
+| `more` | a Bottom cursor |
+| `end_unverified` | no Bottom cursor; a missing continuation is not proof of the end |
+
+`Coverage.Dropped` counts items X sent that could not be read (tombstones,
+unavailable users). `Coverage.PartialErrors` counts the GraphQL errors X
+reported beside usable data. `stalled` and `PartialErrors` need the request,
+so they are reported by the collection reads above and by
+`HomeTimelinePage`, `HomeLatestTimelinePage`, `GetFollowersPage`,
+`GetFollowingPage`, `GetListTimelinePage` and `GetListMembersPage`; other
+page methods and the `Parse*` functions report the rest.
+
 ### Trend analysis
 
 ```go
@@ -512,6 +560,7 @@ if errors.Is(err, x.ErrNotFound)          { /* user/tweet doesn't exist */ }
 if errors.Is(err, x.ErrRateLimited)       { /* slow down */ }
 if errors.Is(err, x.ErrSuspended)         { /* account suspended */ }
 if errors.Is(err, x.ErrQueryIDStale)      { /* call RefreshQueryIDs */ }
+if errors.Is(err, x.ErrQueryIDUnavailable) { /* no query id for the operation; nothing was sent */ }
 if errors.Is(err, x.ErrTweetTooLong)      { /* >280 characters */ }
 if errors.Is(err, x.ErrAlreadyRetweeted)  { /* duplicate retweet */ }
 if errors.Is(err, x.ErrDMClosed)          { /* recipient has DMs closed */ }
@@ -534,6 +583,17 @@ posting throttle or the daily limit, so a 344 matches both
 to treat it differently from 185. These enforcement and content codes are
 never retried.
 
+Changes after v1.18.1 for existing callers:
+
+- Users grouped in module entries are returned. `GetFollowersPage`,
+  `GetFollowingPage`, `GetListMembersPage` and `SearchUsersPage` used to drop
+  them silently.
+- `TweetPage` and `UserPage` gain `Coverage` (JSON `coverage`); `Tweets`,
+  `Users`, `NextCursor` and `HasNext` are unchanged.
+- `List` gains `OwnerScreenName`, filled by `GetList` (so `x_get_list` answers
+  carry `ownerScreenName`), and `SubscriberCount`, `ViewerSubscribed` and
+  `CreatedAt`, which stay unset until a Live capture.
+
 Changes in v1.15.0 for existing callers:
 
 - A 403 carrying code 226 is `ErrAutomatedRequest` and a 403 carrying 326 is
@@ -547,7 +607,7 @@ Changes in v1.15.0 for existing callers:
 
 ## MCP support
 
-This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 37 tools cover the full client API: profile fetch (handle/ID/me), follower/following graph, home + latest timelines, tweet fetch + thread, user-tweet feed, simple/user/advanced search, tweet compose (create/reply/quote/delete), engagement (like/unlike/retweet/unretweet/bookmark/unbookmark), social graph writes (follow/unfollow/mute/unmute/block/unblock), DMs (list/read/send/cold-send), lists (metadata/timeline/members), and timeline trend analysis.
+This package ships an [MCP](https://modelcontextprotocol.io/) tool surface in `./mcp` for use with [`teslashibe/mcptool`](https://github.com/teslashibe/mcptool)-compatible hosts (e.g. [`teslashibe/agent-setup`](https://github.com/teslashibe/agent-setup)). 45 tools cover the full client API: profile fetch (handle/ID/me), follower/following graph, home + latest timelines, tweet fetch + thread, user-tweet feed, simple/user/advanced search, tweet compose (create/reply/quote/delete), engagement (like/unlike/retweet/unretweet/bookmark/unbookmark), social graph writes (follow/unfollow/mute/unmute/block/unblock), DMs (list/read/send/cold-send), lists (metadata/timeline/members), timeline trend analysis, and account collections (`x_get_bookmarks`, `x_get_liked_posts`, `x_get_muted_users`, `x_get_blocked_users`, `x_get_owned_lists`, `x_get_subscribed_lists`), whose pages also carry `coverage`.
 
 ```go
 import (
