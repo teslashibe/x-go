@@ -11,6 +11,7 @@ func (c *Client) GetFollowers(ctx context.Context, userID string, count int) (Us
 }
 
 // GetFollowersPage returns a page of followers starting from cursor.
+// Coverage reports stalled pages and partial errors (see PageEnd).
 func (c *Client) GetFollowersPage(ctx context.Context, userID string, count int, cursor string) (UserPage, error) {
 	if userID == "" {
 		return UserPage{}, fmt.Errorf("%w: userID must not be empty", ErrInvalidParams)
@@ -28,12 +29,13 @@ func (c *Client) GetFollowersPage(ctx context.Context, userID string, count int,
 		vars["cursor"] = cursor
 	}
 
+	ctx, req := newPageRequest(ctx, "Followers", "user.result.timeline", cursor)
 	raw, err := c.graphqlGET(ctx, "Followers", vars)
 	if err != nil {
 		return UserPage{}, err
 	}
 
-	return parseUserPage(raw, "user.result.timeline")
+	return req.userPage(raw)
 }
 
 // GetFollowing returns the first page of users a given user is following.
@@ -42,6 +44,7 @@ func (c *Client) GetFollowing(ctx context.Context, userID string, count int) (Us
 }
 
 // GetFollowingPage returns a page of following users starting from cursor.
+// Coverage reports stalled pages and partial errors (see PageEnd).
 func (c *Client) GetFollowingPage(ctx context.Context, userID string, count int, cursor string) (UserPage, error) {
 	if userID == "" {
 		return UserPage{}, fmt.Errorf("%w: userID must not be empty", ErrInvalidParams)
@@ -59,10 +62,11 @@ func (c *Client) GetFollowingPage(ctx context.Context, userID string, count int,
 		vars["cursor"] = cursor
 	}
 
+	ctx, req := newPageRequest(ctx, "Following", "user.result.timeline", cursor)
 	raw, err := c.graphqlGET(ctx, "Following", vars)
 	if err != nil {
 		return UserPage{}, err
 	}
 
-	return parseUserPage(raw, "user.result.timeline")
+	return req.userPage(raw)
 }

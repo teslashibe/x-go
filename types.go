@@ -151,6 +151,10 @@ type TweetPage struct {
 	Tweets     []Tweet `json:"tweets"`
 	NextCursor string  `json:"nextCursor,omitempty"`
 	HasNext    bool    `json:"hasNext"`
+
+	// Coverage says how this page ends; HasNext keeps its meaning (any
+	// Bottom cursor). See PageEnd.
+	Coverage PageCoverage `json:"coverage"`
 }
 
 // UserPage is one page of users with a cursor for the next page.
@@ -158,6 +162,10 @@ type UserPage struct {
 	Users      []User `json:"users"`
 	NextCursor string `json:"nextCursor,omitempty"`
 	HasNext    bool   `json:"hasNext"`
+
+	// Coverage says how this page ends; HasNext keeps its meaning (any
+	// Bottom cursor). See PageEnd.
+	Coverage PageCoverage `json:"coverage"`
 }
 
 // TweetDetail holds a tweet with the parent chain and replies X returned.
@@ -181,6 +189,15 @@ type List struct {
 	OwnerID     string `json:"ownerId,omitempty"`
 	OwnerName   string `json:"ownerName,omitempty"`
 	IsPrivate   bool   `json:"isPrivate"`
+
+	// OwnerScreenName is the owner's legacy.screen_name.
+	OwnerScreenName string `json:"ownerScreenName,omitempty"`
+	// SubscriberCount, ViewerSubscribed and CreatedAt are not mapped yet:
+	// their JSON paths wait for a Live capture, so they stay 0, nil and the
+	// zero time. A nil ViewerSubscribed means unknown, never "no".
+	SubscriberCount  int       `json:"subscriberCount,omitempty"`
+	ViewerSubscribed *bool     `json:"viewerSubscribed,omitempty"`
+	CreatedAt        time.Time `json:"createdAt,omitzero"`
 }
 
 // SearchType controls which tab of X search to query.

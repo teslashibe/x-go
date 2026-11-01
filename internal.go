@@ -63,6 +63,9 @@ type timelineInstruction struct {
 	Type    string          `json:"type"`
 	Entries []timelineEntry `json:"entries"`
 	Entry   *timelineEntry  `json:"entry"`
+
+	// Direction is set on TimelineTerminateTimeline instructions.
+	Direction string `json:"direction"`
 }
 
 type timelineEntry struct {
@@ -88,6 +91,7 @@ type itemContent struct {
 	ItemType     string       `json:"itemType"`
 	TweetResults *tweetResult `json:"tweet_results"`
 	UserResults  *userResult  `json:"user_results"`
+	List         *listObj     `json:"list"`
 }
 
 type tweetResult struct {
@@ -432,6 +436,8 @@ func parseTweetPage(raw json.RawMessage, timelineKey string) (TweetPage, error) 
 				if tweet.ID != "" {
 					page.Tweets = append(page.Tweets, tweet)
 				}
+			} else if hasTweetResult(entry.Content.ItemContent) {
+				page.Coverage.Dropped++
 			}
 			if entry.Content.CursorType == "Bottom" && entry.Content.Value != "" {
 				page.NextCursor = entry.Content.Value
@@ -446,12 +452,15 @@ func parseTweetPage(raw json.RawMessage, timelineKey string) (TweetPage, error) 
 					}
 					if ok {
 						page.Tweets = append(page.Tweets, tw)
+					} else {
+						page.Coverage.Dropped++
 					}
 				}
 			}
 		}
 	}
 
+	page.Coverage.End = pageEnd(len(page.Tweets), page.Coverage.Dropped, page.NextCursor)
 	return page, nil
 }
 
@@ -472,15 +481,30 @@ func parseUserPage(raw json.RawMessage, timelineKey string) (UserPage, error) {
 			if user, ok := extractUserFromEntry(entry); ok {
 				if user.ID != "" {
 					page.Users = append(page.Users, user)
+				} else {
+					page.Coverage.Dropped++
 				}
 			}
 			if entry.Content.CursorType == "Bottom" && entry.Content.Value != "" {
 				page.NextCursor = entry.Content.Value
 				page.HasNext = true
 			}
+			// Module entries: users grouped in a module (for example a
+			// follower list split into modules); earlier releases dropped them.
+			for _, item := range entry.Content.Items {
+				if item.Item.ItemContent.UserResults == nil {
+					continue
+				}
+				if user := toUser(item.Item.ItemContent.UserResults.Result); user.ID != "" {
+					page.Users = append(page.Users, user)
+				} else {
+					page.Coverage.Dropped++
+				}
+			}
 		}
 	}
 
+	page.Coverage.End = pageEnd(len(page.Users), page.Coverage.Dropped, page.NextCursor)
 	return page, nil
 }
 

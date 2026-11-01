@@ -22,18 +22,7 @@ func (c *Client) GetList(ctx context.Context, listID string) (*List, error) {
 	}
 
 	var data struct {
-		List struct {
-			ID          string `json:"id_str"`
-			Name        string `json:"name"`
-			Slug        string `json:"slug"`
-			Description string `json:"description"`
-			MemberCount int    `json:"member_count"`
-			Mode        string `json:"mode"`
-			User        struct {
-				RestID string     `json:"rest_id"`
-				Legacy userLegacy `json:"legacy"`
-			} `json:"user"`
-		} `json:"list"`
+		List listObj `json:"list"`
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("%w: decoding list: %v", ErrRequestFailed, err)
@@ -43,17 +32,8 @@ func (c *Client) GetList(ctx context.Context, listID string) (*List, error) {
 		return nil, ErrNotFound
 	}
 
-	l := &List{
-		ID:          data.List.ID,
-		Name:        data.List.Name,
-		Slug:        data.List.Slug,
-		Description: data.List.Description,
-		MemberCount: data.List.MemberCount,
-		OwnerID:     data.List.User.RestID,
-		OwnerName:   data.List.User.Legacy.Name,
-		IsPrivate:   data.List.Mode == "Private",
-	}
-	return l, nil
+	l := toList(data.List)
+	return &l, nil
 }
 
 // GetListTimeline returns the first page of tweets from a list.
@@ -62,6 +42,7 @@ func (c *Client) GetListTimeline(ctx context.Context, listID string, count int) 
 }
 
 // GetListTimelinePage returns a page of tweets from a list starting from cursor.
+// Coverage reports stalled pages and partial errors (see PageEnd).
 func (c *Client) GetListTimelinePage(ctx context.Context, listID string, count int, cursor string) (TweetPage, error) {
 	if listID == "" {
 		return TweetPage{}, fmt.Errorf("%w: listID must not be empty", ErrInvalidParams)
@@ -78,12 +59,13 @@ func (c *Client) GetListTimelinePage(ctx context.Context, listID string, count i
 		vars["cursor"] = cursor
 	}
 
+	ctx, req := newPageRequest(ctx, "ListLatestTweetsTimeline", "list.tweets_timeline", cursor)
 	raw, err := c.graphqlGET(ctx, "ListLatestTweetsTimeline", vars)
 	if err != nil {
 		return TweetPage{}, err
 	}
 
-	return parseTweetPage(raw, "list.tweets_timeline")
+	return req.tweetPage(raw)
 }
 
 // GetListMembers returns the first page of members of a list.
@@ -92,6 +74,7 @@ func (c *Client) GetListMembers(ctx context.Context, listID string, count int) (
 }
 
 // GetListMembersPage returns a page of list members starting from cursor.
+// Coverage reports stalled pages and partial errors (see PageEnd).
 func (c *Client) GetListMembersPage(ctx context.Context, listID string, count int, cursor string) (UserPage, error) {
 	if listID == "" {
 		return UserPage{}, fmt.Errorf("%w: listID must not be empty", ErrInvalidParams)
@@ -108,10 +91,11 @@ func (c *Client) GetListMembersPage(ctx context.Context, listID string, count in
 		vars["cursor"] = cursor
 	}
 
+	ctx, req := newPageRequest(ctx, "ListMembers", "list.members_timeline", cursor)
 	raw, err := c.graphqlGET(ctx, "ListMembers", vars)
 	if err != nil {
 		return UserPage{}, err
 	}
 
-	return parseUserPage(raw, "list.members_timeline")
+	return req.userPage(raw)
 }
