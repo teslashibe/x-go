@@ -218,6 +218,20 @@ func TestWritesSendOnceNoRedirect(t *testing.T) {
 				t.Fatalf("requests = %d, want 1 (never retried)", n)
 			}
 		})
+		t.Run(w.name+"/server_error_known_code", func(t *testing.T) {
+			// Spec 8.5: a 5xx is uncertain; the 226 sentinel stays in Err so
+			// a breaker can still trip.
+			c, seen := recordingClient(t, respondWith(http.StatusServiceUnavailable, "application/json", `{"errors":[{"code":226,"message":"This request looks like it might be automated."}]}`))
+			res, err := w.call(c, ctx, w.target)
+			oe := outcomeOf(t, w.name, res, err)
+			wantAmbiguous(t, oe)
+			if oe.Status != http.StatusServiceUnavailable || oe.Code != 226 || !errors.Is(err, ErrAutomatedRequest) {
+				t.Fatalf("error %v %+v, want ambiguous 503 carrying ErrAutomatedRequest and code 226", err, oe)
+			}
+			if n := len(seen()); n != 1 {
+				t.Fatalf("requests = %d, want 1 (never retried)", n)
+			}
+		})
 		t.Run(w.name+"/transport_reset", func(t *testing.T) {
 			var received atomic.Int32
 			c := newServerClient(t, func(rw http.ResponseWriter, r *http.Request) {
@@ -384,8 +398,10 @@ func TestFormWritesApplyOnlyOnMatchingUser(t *testing.T) {
 }
 
 // TestWriteStaleQueryID: a missing query id sends nothing; a 404 without an
-// X error body is a stale query id (definite, never ErrNotFound); X's own
-// not-found codes stay ErrNotFound with the code recorded.
+// X error body is ambiguous (spec 8.5: uncertain delivery_unknown) and wraps
+// ErrQueryIDStale, never ErrNotFound; X's own not-found codes 34/144 stay
+// ErrNotFound with the code recorded; a 404 with any other unmapped code is
+// ambiguous and never ErrNotFound.
 func TestWriteStaleQueryID(t *testing.T) {
 	ctx := context.Background()
 	for _, w := range typedWrites {
@@ -403,15 +419,20 @@ func TestWriteStaleQueryID(t *testing.T) {
 			}
 		})
 		t.Run(w.name+"/stale", func(t *testing.T) {
-			c, seen := recordingClient(t, respondWith(http.StatusNotFound, "", ""))
-			res, err := w.call(c, ctx, w.target)
-			oe := outcomeOf(t, w.name, res, err)
-			wantDefinite(t, oe, false)
-			if !errors.Is(err, ErrQueryIDStale) || errors.Is(err, ErrNotFound) || oe.Status != 404 || oe.Code != 0 {
-				t.Fatalf("error %v %+v, want ErrQueryIDStale only", err, oe)
-			}
-			if c.QueryMetadataRefreshed() || len(seen()) != 1 {
-				t.Fatalf("requests %d refreshed %v, want 1 and no refresh", len(seen()), c.QueryMetadataRefreshed())
+			for _, resp := range []struct{ contentType, body string }{
+				{"", ""},
+				{"text/html", "<html><body>Not Found</body></html>"},
+			} {
+				c, seen := recordingClient(t, respondWith(http.StatusNotFound, resp.contentType, resp.body))
+				res, err := w.call(c, ctx, w.target)
+				oe := outcomeOf(t, w.name, res, err)
+				wantAmbiguous(t, oe)
+				if !errors.Is(err, ErrQueryIDStale) || errors.Is(err, ErrNotFound) || oe.Status != 404 || oe.Code != 0 {
+					t.Fatalf("%q: error %v %+v, want ErrQueryIDStale only", resp.body, err, oe)
+				}
+				if c.QueryMetadataRefreshed() || len(seen()) != 1 {
+					t.Fatalf("%q: requests %d refreshed %v, want 1 and no refresh", resp.body, len(seen()), c.QueryMetadataRefreshed())
+				}
 			}
 		})
 		t.Run(w.name+"/not_found_code", func(t *testing.T) {
@@ -424,12 +445,29 @@ func TestWriteStaleQueryID(t *testing.T) {
 			}
 		})
 	}
+	// Only codes 34 and 144 prove an absent target: a 404 with any other
+	// unmapped code, even with a "not found" message, is ambiguous.
+	for _, w := range typedWrites {
+		for _, body := range []string{
+			`{"errors":[{"code":9999,"message":"something"}]}`,
+			`{"errors":[{"code":9998,"message":"Page not found"}]}`,
+		} {
+			c, seen := recordingClient(t, respondWith(http.StatusNotFound, "application/json", body))
+			res, err := w.call(c, ctx, w.target)
+			oe := outcomeOf(t, w.name, res, err)
+			wantAmbiguous(t, oe)
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrQueryIDStale) || !errors.Is(err, ErrRequestFailed) || oe.Status != 404 || oe.Code == 0 || len(seen()) != 1 {
+				t.Fatalf("%s %s: error %v %+v requests %d, want ErrRequestFailed with the code, ambiguous", w.name, body, err, oe, len(seen()))
+			}
+		}
+	}
+
 	// A form path has no query id: a bare 404 proves nothing and is ambiguous.
 	c, _ := recordingClient(t, respondWith(http.StatusNotFound, "", ""))
 	res, err := c.FollowUser(ctx, typedUserID)
 	oe := outcomeOf(t, "FollowUser", res, err)
 	wantAmbiguous(t, oe)
-	if errors.Is(err, ErrNotFound) || oe.Status != 404 {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrQueryIDStale) || oe.Status != 404 {
 		t.Fatalf("FollowUser bare 404: %v %+v", err, oe)
 	}
 
@@ -447,6 +485,14 @@ func TestWriteStaleQueryID(t *testing.T) {
 		c, seen = recordingClient(t, respondWith(http.StatusNotFound, "", ""))
 		if err := read(c); !errors.Is(err, ErrQueryIDStale) || errors.Is(err, ErrNotFound) || len(seen()) != 1 {
 			t.Fatalf("%s bare 404: %v, %d requests", op, err, len(seen()))
+		}
+		c, _ = recordingClient(t, respondWith(http.StatusNotFound, "application/json", `{"errors":[{"code":9999,"message":"not found"}]}`))
+		if err := read(c); !errors.Is(err, ErrRequestFailed) || errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s 404 with unmapped code: %v, want ErrRequestFailed and not ErrNotFound", op, err)
+		}
+		c, _ = recordingClient(t, respondWith(http.StatusNotFound, "application/json", `{"errors":[{"code":34,"message":"Sorry, that page does not exist."}]}`))
+		if err := read(c); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s 404 with code 34: %v, want ErrNotFound", op, err)
 		}
 	}
 }

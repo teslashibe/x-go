@@ -28,10 +28,14 @@ import (
 //     so today a GraphQL success response without errors is ambiguous.
 //   - A form POST is applied only on a 200 JSON user whose id_str equals the
 //     target. For FollowUser, follow_request_sent true gives WriteRequested.
-//   - A redirect, a non-200 2xx, a transport failure after sending, a 5xx, an
-//     unknown error code or a response that does not confirm the change is
-//     ambiguous. Known X rejections (for example 226, 144, 88 or HTTP 429) are
-//     definite, as classifyWriteOutcome already decides for CreatePost.
+//   - A redirect, a non-200 2xx, a transport failure after sending, any 5xx,
+//     a 404 without an X error body (on a GraphQL path ErrQueryIDStale), a 404
+//     whose X code is not 34/144 or otherwise mapped, an unknown error code or
+//     a response that does not confirm the change is ambiguous. A 5xx keeps
+//     the sentinel a known code maps to (226 is still ErrAutomatedRequest).
+//     Known X rejections on a 4xx or a 200 (for example 226, 144, 88 or HTTP
+//     429) are definite, as classifyWriteOutcome already decides for
+//     CreatePost.
 //   - Code 327 keeps its existing mapping to ErrAlreadyRetweeted and is never
 //     read as WriteAlreadyInState: no recorded capture shows what it means for
 //     these operations.
@@ -205,25 +209,42 @@ func (c *Client) rateLimited(err error, h http.Header) error {
 	return &RateLimitError{Wait: wait}
 }
 
-// statusError classifies a non-200 response. ok is false for a 200.
-// A 404 without an X error body on a GraphQL path is a stale query id, never
-// ErrNotFound: only X error codes (34, 144, ...) prove an absent target.
-func (c *Client) statusError(r singleResponse, graphql bool) (err error, redirect, bare404 bool) {
+// statusError classifies a non-200 response; err is nil for a 200.
+//
+// uncertain reports a response a write must treat as ambiguous whatever
+// sentinel err carries (spec 8.5):
+//   - a refused redirect;
+//   - a 404 without an X error body. On a GraphQL path err is
+//     ErrQueryIDStale (so the capability can be marked degraded), never
+//     ErrNotFound;
+//   - a 404 whose X error code is not 34 or 144 and has no other mapping:
+//     only those codes prove an absent target, so err is ErrRequestFailed
+//     with the code, never ErrNotFound (a "not found" message is not proof);
+//   - any 5xx. err keeps the sentinel a known X code maps to (for example
+//     ErrAutomatedRequest for 226), so a breaker can still trip on it.
+func (c *Client) statusError(r singleResponse, graphql bool) (err error, uncertain bool) {
 	if r.status >= 300 && r.status < 400 {
 		c.updateRateLimit(r.resp)
-		return fmt.Errorf("%w: %w: HTTP %d", ErrRequestFailed, errRedirectRefused, r.status), true, false
+		return fmt.Errorf("%w: %w: HTTP %d", ErrRequestFailed, errRedirectRefused, r.status), true
 	}
-	if r.status == http.StatusNotFound && len(xErrorEnvelope(r.body)) == 0 {
-		c.updateRateLimit(r.resp)
-		if graphql {
-			return fmt.Errorf("%w: HTTP 404 without an X error body", ErrQueryIDStale), false, true
+	if r.status == http.StatusNotFound {
+		errs := xErrorEnvelope(r.body)
+		if len(errs) == 0 {
+			c.updateRateLimit(r.resp)
+			if graphql {
+				return fmt.Errorf("%w: HTTP 404 without an X error body", ErrQueryIDStale), true
+			}
+			return fmt.Errorf("%w: HTTP 404 without an X error body", ErrRequestFailed), true
 		}
-		return fmt.Errorf("%w: HTTP 404 without an X error body", ErrRequestFailed), false, true
+		if code := errs[0].code(); classifyXErrorCode(code) == nil {
+			c.updateRateLimit(r.resp)
+			return fmt.Errorf("%w: HTTP 404 with X error code %d, which does not prove the target is absent", ErrRequestFailed, code), true
+		}
 	}
 	if err := c.checkStatus(r.resp); err != nil {
-		return c.rateLimited(err, r.resp.Header), false, false
+		return c.rateLimited(err, r.resp.Header), r.status >= 500
 	}
-	return nil, false, false
+	return nil, false
 }
 
 // graphqlWrite sends one typed GraphQL write and applies the outcome rules.
@@ -258,13 +279,9 @@ func (c *Client) graphqlWrite(ctx context.Context, op gqlWriteOp, id string) (Wr
 	if err != nil {
 		return WriteResult{}, ambiguousWrite(op.method, 0, 0, err)
 	}
-	if err, redirect, bare404 := c.statusError(r, true); err != nil {
-		if redirect {
-			return WriteResult{}, ambiguousWrite(op.method, r.status, 0, err)
-		}
-		if bare404 {
-			// A stale query id: X routed no operation, so nothing ran.
-			return WriteResult{}, &OutcomeError{Operation: op.method, Outcome: ErrDefinite, Status: r.status, Err: err}
+	if err, uncertain := c.statusError(r, true); err != nil {
+		if uncertain {
+			return WriteResult{}, ambiguousWrite(op.method, r.status, firstXErrorCode(r.body), err)
 		}
 		return WriteResult{}, classifiedWrite(op.method, r.status, firstXErrorCode(r.body), err)
 	}
@@ -304,9 +321,9 @@ func (c *Client) formWrite(ctx context.Context, op formWriteOp, userID string) (
 	if err != nil {
 		return WriteResult{}, ambiguousWrite(op.method, 0, 0, err)
 	}
-	if err, redirect, bare404 := c.statusError(r, false); err != nil {
-		if redirect || bare404 {
-			return WriteResult{}, ambiguousWrite(op.method, r.status, 0, err)
+	if err, uncertain := c.statusError(r, false); err != nil {
+		if uncertain {
+			return WriteResult{}, ambiguousWrite(op.method, r.status, firstXErrorCode(r.body), err)
 		}
 		return WriteResult{}, classifiedWrite(op.method, r.status, firstXErrorCode(r.body), err)
 	}
@@ -358,7 +375,7 @@ func (c *Client) graphqlReadOnce(ctx context.Context, operation string, variable
 	if err != nil {
 		return nil, err
 	}
-	if err, _, _ := c.statusError(r, true); err != nil {
+	if err, _ := c.statusError(r, true); err != nil {
 		return nil, c.operationError(operation, r.req, r.resp, err)
 	}
 	envelope, err := decodeGQLResponse(r.body)

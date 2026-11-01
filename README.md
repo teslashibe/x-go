@@ -342,8 +342,14 @@ applied), and wraps `x.ErrDefinite` or `x.ErrAmbiguous`.
   ambiguous and `{"data":{}}` is always ambiguous.
 - `x.WriteAlreadyInState` is not returned until a recorded code maps to it;
   code 327 stays `x.ErrAlreadyRetweeted`.
-- A missing query id is `x.ErrQueryIDUnavailable` with no request; a 404
-  without an X error body on a GraphQL path is `x.ErrQueryIDStale`.
+- A missing query id is `x.ErrQueryIDUnavailable` with no request. A 404
+  without an X error body is ambiguous (X may have run the write); on a
+  GraphQL path it also wraps `x.ErrQueryIDStale`, so the capability can be
+  marked degraded.
+- Only X codes 34 and 144 on a 404 give `x.ErrNotFound`; a 404 with any other
+  unmapped code is ambiguous with `x.ErrRequestFailed` and `Code` set.
+- Any 5xx is ambiguous. It still wraps the sentinel a known code maps to
+  (for example `x.ErrAutomatedRequest` for 226), so check `Ambiguous` first.
 
 The untyped `Like` … `Unblock` and `DeleteTweet` are unchanged.
 

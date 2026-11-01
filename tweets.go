@@ -190,7 +190,8 @@ func (c *Client) DeletePost(ctx context.Context, postID string) (WriteResult, er
 // GetTweet it does not fold tombstones into ErrNotFound, and a present post
 // carries Tweet.Viewer when X returned every viewer flag. It sends exactly
 // one request, never retries and refuses redirects. A 404 without an X error
-// body is ErrQueryIDStale; X error codes 34 and 144 stay ErrNotFound.
+// body is ErrQueryIDStale; only X error codes 34 and 144 on a 404 give
+// ErrNotFound, and a 404 with any other unmapped code is ErrRequestFailed.
 func (c *Client) GetPostState(ctx context.Context, postID string) (PostState, error) {
 	if !xNumericID(postID) {
 		return PostState{}, fmt.Errorf("%w: postID must be a numeric X ID", ErrInvalidParams)
