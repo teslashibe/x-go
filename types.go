@@ -77,6 +77,73 @@ type Tweet struct {
 	// AuthorFollowersCount is the author's followers_count embedded in the
 	// post, or nil when X omitted it.
 	AuthorFollowersCount *int `json:"authorFollowersCount,omitempty"`
+	// Viewer is the authenticated account's state on this post. Only
+	// GetPostState sets it, and only when X returned every flag; the Parse
+	// functions and the other reads leave it nil.
+	Viewer *PostViewerState `json:"viewer,omitempty"`
+}
+
+// PostViewerState is the authenticated account's relation to one post.
+type PostViewerState struct {
+	Liked      bool `json:"liked"`
+	Reposted   bool `json:"reposted"`
+	Bookmarked bool `json:"bookmarked"`
+}
+
+// PostKind is what GetPostState found for a post ID.
+type PostKind string
+
+const (
+	// PostPresent: X returned the post; PostState.Tweet is set.
+	PostPresent PostKind = "present"
+	// PostTombstone: X returned a tombstone (for example a deleted post).
+	PostTombstone PostKind = "tombstone"
+	// PostUnavailable: X returned TweetUnavailable with a reason.
+	PostUnavailable PostKind = "unavailable"
+	// PostEmpty: X returned the result root with no post in it.
+	PostEmpty PostKind = "empty"
+)
+
+// PostState is the result of GetPostState. Reason is X's tombstone text or
+// unavailable reason, when it gave one.
+type PostState struct {
+	Kind   PostKind `json:"kind"`
+	Tweet  *Tweet   `json:"tweet,omitempty"`
+	Reason string   `json:"reason,omitempty"`
+}
+
+// Relationship is the authenticated account's relationship with one user,
+// as GetUserRelationship read it.
+type Relationship struct {
+	Following         bool `json:"following"`
+	FollowedBy        bool `json:"followedBy"`
+	FollowRequestSent bool `json:"followRequestSent"`
+	Muting            bool `json:"muting"`
+	Blocking          bool `json:"blocking"`
+	BlockedBy         bool `json:"blockedBy"`
+}
+
+// WriteState is the confirmed result of a typed write.
+type WriteState string
+
+const (
+	// WriteApplied: the provider confirmed the change.
+	WriteApplied WriteState = "applied"
+	// WriteAlreadyInState: the provider confirmed the target was already in
+	// the requested state. No recorded provider code maps here yet, so the
+	// SDK does not return it today.
+	WriteAlreadyInState WriteState = "already_in_state"
+	// WriteRequested: a follow of a protected account became a pending
+	// follow request.
+	WriteRequested WriteState = "requested"
+)
+
+// WriteResult is the success value of a typed write. Every failure is an
+// *OutcomeError instead; an unconfirmed write is never a WriteResult.
+type WriteResult struct {
+	Operation string     `json:"operation"`
+	TargetID  string     `json:"targetId"`
+	State     WriteState `json:"state"`
 }
 
 // TweetPage is one page of tweets with a cursor for the next page.

@@ -10,9 +10,10 @@ import (
 )
 
 // TestFixturesAreSanitized guards this public repository: recorded GraphQL
-// fixtures carry only remapped IDs, u<n> handles and placeholder URLs, and
-// the sanitizer carries no post IDs or job UUIDs (sanitize.py's own check
-// also compares every output against the original values).
+// fixtures and the REST fixtures carry only remapped IDs, u<n> handles and
+// placeholder URLs, and the sanitizer carries no post IDs or job UUIDs
+// (sanitize.py's own check also compares every output against the original
+// values).
 func TestFixturesAreSanitized(t *testing.T) {
 	var (
 		remapped    = regexp.MustCompile(`^10+[1-9][0-9]{0,3}$`)
@@ -22,9 +23,13 @@ func TestFixturesAreSanitized(t *testing.T) {
 		placeholder = regexp.MustCompile(`^https://(example\.com/s[0-9]+|pbs\.twimg\.com/media/sanitized[0-9]+\.jpg)$`)
 		uuid        = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	)
-	files, err := filepath.Glob(filepath.Join("testdata", "graphql", "*.json"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("fixtures: %v %v", files, err)
+	var files []string
+	for _, dir := range []string{"graphql", "rest"} {
+		found, err := filepath.Glob(filepath.Join("testdata", dir, "*.json"))
+		if err != nil || len(found) == 0 {
+			t.Fatalf("%s fixtures: %v %v", dir, found, err)
+		}
+		files = append(files, found...)
 	}
 	for _, file := range files {
 		raw, err := os.ReadFile(file)

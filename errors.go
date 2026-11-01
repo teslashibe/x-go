@@ -38,6 +38,12 @@ var (
 	ErrAmbiguous         = errors.New("x: request outcome is ambiguous")
 	errWriteNotAttempted = errors.New("x: write was not attempted")
 	errMissingAck        = errors.New("x: write response carried no post ID")
+	// ErrQueryIDUnavailable means the SDK has no GraphQL query id for the
+	// operation a method needs, so it sent nothing. Query ids are added only
+	// from recorded provider captures.
+	ErrQueryIDUnavailable = errors.New("x: no query id is available for this operation")
+	errRedirectRefused    = errors.New("x: provider redirect refused")
+	errUnconfirmedWrite   = errors.New("x: write response did not confirm the change")
 
 	ErrUnsupportedMediaType = errors.New("x: unsupported media type")
 	ErrMediaTooLarge        = errors.New("x: media exceeds the maximum allowed size")
@@ -67,14 +73,62 @@ func (e *OperationError) Unwrap() error { return e.Err }
 
 // OutcomeError classifies whether a failed write definitely did not complete
 // or may have completed before the transport failed.
+//
+// Outcome is ErrDefinite or ErrAmbiguous. The typed write methods (LikePost,
+// FollowUser, DeletePost, ...) also fill the remaining fields; CreatePost,
+// QuotePost and ReplyToPost set only Outcome and Err.
 type OutcomeError struct {
 	Outcome error
 	Err     error
+
+	// Operation is the SDK method that failed, for example "LikePost".
+	Operation string
+	// Status is the provider HTTP status, or 0 when no response arrived.
+	Status int
+	// Code is the first X error code in the response, or 0.
+	Code int
+	// NotAttempted reports that no request was sent (invalid input, no query
+	// id, or a context that ended before sending). It implies ErrDefinite.
+	NotAttempted bool
+	// Ambiguous reports that the write may have been applied. It matches
+	// Outcome == ErrAmbiguous on the typed write methods.
+	Ambiguous bool
 }
 
-func (e *OutcomeError) Error() string { return e.Outcome.Error() + ": " + e.Err.Error() }
+// outcome is Outcome, or the sentinel the flags imply when Outcome is nil.
+func (e *OutcomeError) outcome() error {
+	switch {
+	case e.Outcome != nil:
+		return e.Outcome
+	case e.Ambiguous:
+		return ErrAmbiguous
+	case e.NotAttempted:
+		return ErrDefinite
+	default:
+		return nil
+	}
+}
+
+func (e *OutcomeError) Error() string {
+	msg := "x: write failed"
+	if outcome := e.outcome(); outcome != nil {
+		msg = outcome.Error()
+	}
+	if e.Err == nil {
+		return msg
+	}
+	return msg + ": " + e.Err.Error()
+}
+
 func (e *OutcomeError) Unwrap() []error {
-	return []error{e.Outcome, e.Err}
+	errs := make([]error, 0, 2)
+	if outcome := e.outcome(); outcome != nil {
+		errs = append(errs, outcome)
+	}
+	if e.Err != nil {
+		errs = append(errs, e.Err)
+	}
+	return errs
 }
 
 func classifyWriteOutcome(err error) error {

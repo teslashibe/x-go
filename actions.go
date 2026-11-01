@@ -75,3 +75,39 @@ func (c *Client) Unbookmark(ctx context.Context, tweetID string) error {
 	_, err := c.graphqlPOST(ctx, "DeleteBookmark", vars)
 	return err
 }
+
+// The typed writes below send exactly one request and return a WriteResult
+// only when X confirmed the change. Every failure is an *OutcomeError that
+// says whether the write was not attempted, definitely rejected, or ambiguous
+// (it may have been applied). They are never retried. See write.go for the
+// outcome rules. Like, Unlike and the other untyped methods are unchanged.
+
+// LikePost likes postID (FavoriteTweet).
+func (c *Client) LikePost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, likePostOp, postID)
+}
+
+// UnlikePost removes a like from postID (UnfavoriteTweet).
+func (c *Client) UnlikePost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, unlikePostOp, postID)
+}
+
+// Repost reposts postID (CreateRetweet).
+func (c *Client) Repost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, repostOp, postID)
+}
+
+// Unrepost undoes a repost of postID (DeleteRetweet).
+func (c *Client) Unrepost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, unrepostOp, postID)
+}
+
+// BookmarkPost bookmarks postID (CreateBookmark).
+func (c *Client) BookmarkPost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, bookmarkPostOp, postID)
+}
+
+// UnbookmarkPost removes postID from bookmarks (DeleteBookmark).
+func (c *Client) UnbookmarkPost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, unbookmarkPostOp, postID)
+}
