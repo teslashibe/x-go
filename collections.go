@@ -8,14 +8,10 @@ import (
 	"net/http"
 )
 
-// ErrQueryIDUnavailable means the client holds no GraphQL query id for the
-// operation, so the method refused before sending any request. Query ids for
-// the collection reads below enter the defaults only from a Live capture;
-// until then a caller may supply one with WithQueryIDs or RefreshQueryIDs.
-var ErrQueryIDUnavailable = errors.New("x: no query id is available for this operation")
-
-// QueryIDUnavailableError names the operation that has no query id. It
-// matches ErrQueryIDUnavailable.
+// QueryIDUnavailableError names the operation that has no query id, so the
+// method refused before sending any request. It matches
+// ErrQueryIDUnavailable. Query ids for the collection reads below enter the
+// defaults only from a Live capture.
 type QueryIDUnavailableError struct {
 	Operation string
 }

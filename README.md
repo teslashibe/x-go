@@ -274,9 +274,8 @@ if errors.Is(err, x.ErrQueryIDUnavailable) { /* no query id for this operation *
 No query id for these operations ships in the defaults: query ids enter
 `defaultQueryIDs` only from a Live capture. Until then each method returns a
 `*QueryIDUnavailableError` (matching `ErrQueryIDUnavailable`) without sending
-a request, unless the caller supplies an id through `WithQueryIDs` or
-`RefreshQueryIDs`. Their operation names and response paths are provisional
-and are confirmed with the capture. Each sends at most one request and never
+a request. Their operation names and response paths are provisional and are
+confirmed with the capture. Each sends at most one request and never
 retries: a throttle returns `*RateLimitError` with the cooldown recorded, and
 a non-JSON HTTP 404 (how X answers an unknown query id) returns an
 `*OperationError` matching `ErrQueryIDStale`, not `ErrNotFound`.
