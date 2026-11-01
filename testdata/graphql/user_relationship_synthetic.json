@@ -1,0 +1,1 @@
+{"data":{"user":{"result":{"__typename":"User","rest_id":"1000000000000000903","core":{"name":"filler text 903","screen_name":"u903"},"follow_request_sent":true,"legacy":{"follow_request_sent":true,"followers_count":40},"privacy":{"protected":true},"relationship_perspectives":{"following":false,"followed_by":true,"muting":true,"blocking":false,"blocked_by":false}}}}}

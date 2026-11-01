@@ -53,4 +53,24 @@ var Excluded = map[string]string{
 	"GetFollowing":         "convenience wrapper around GetFollowingPage; the x_get_following tool wraps the cursor-aware variant",
 	"GetListTimeline":      "convenience wrapper around GetListTimelinePage; the x_get_list_timeline tool wraps the cursor-aware variant",
 	"GetListMembers":       "convenience wrapper around GetListMembersPage; the x_get_list_members tool wraps the cursor-aware variant",
+
+	// Typed write outcomes and state reads for the host's action executor.
+	// They need host-owned account authority, admission, approval and
+	// reconcile; the existing x_like, x_follow, x_delete_tweet (and sibling)
+	// tools keep their contracts over the untyped methods.
+	"LikePost":            "typed-outcome write for the host's action executor; the existing x_like tool keeps its contract",
+	"UnlikePost":          "typed-outcome write for the host's action executor; the existing x_unlike tool keeps its contract",
+	"Repost":              "typed-outcome write for the host's action executor; the existing x_retweet tool keeps its contract",
+	"Unrepost":            "typed-outcome write for the host's action executor; the existing x_unretweet tool keeps its contract",
+	"BookmarkPost":        "typed-outcome write for the host's action executor; the existing x_bookmark tool keeps its contract",
+	"UnbookmarkPost":      "typed-outcome write for the host's action executor; the existing x_unbookmark tool keeps its contract",
+	"DeletePost":          "typed-outcome write for the host's action executor; the existing x_delete_tweet tool keeps its contract",
+	"FollowUser":          "typed-outcome write for the host's action executor; the existing x_follow tool keeps its contract",
+	"UnfollowUser":        "typed-outcome write for the host's action executor; the existing x_unfollow tool keeps its contract",
+	"MuteUser":            "typed-outcome write for the host's action executor; the existing x_mute tool keeps its contract",
+	"UnmuteUser":          "typed-outcome write for the host's action executor; the existing x_unmute tool keeps its contract",
+	"BlockUser":           "typed-outcome write for the host's action executor; the existing x_block tool keeps its contract",
+	"UnblockUser":         "typed-outcome write for the host's action executor; the existing x_unblock tool keeps its contract",
+	"GetPostState":        "single-request post state read used by the host's action reconcile; not an agent-callable tool",
+	"GetUserRelationship": "single-request relationship read used by the host's action reconcile; not an agent-callable tool",
 }

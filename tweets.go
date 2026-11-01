@@ -177,3 +177,112 @@ func (c *Client) UserTweetsPage(ctx context.Context, userID string, count int, c
 
 	return parseTweetPage(raw, "user.result.timeline")
 }
+
+// DeletePost deletes postID, a post owned by the authenticated account
+// (DeleteTweet), with the typed outcome rules in write.go. DeleteTweet is
+// unchanged.
+func (c *Client) DeletePost(ctx context.Context, postID string) (WriteResult, error) {
+	return c.graphqlWrite(ctx, deletePostOp, postID)
+}
+
+// GetPostState reads postID once (TweetResultByRestId) and reports whether X
+// returned the post, a tombstone, an unavailable result or nothing. Unlike
+// GetTweet it does not fold tombstones into ErrNotFound, and a present post
+// carries Tweet.Viewer when X returned every viewer flag. It sends exactly
+// one request, never retries and refuses redirects. A 404 without an X error
+// body is ErrQueryIDStale; X error codes 34 and 144 stay ErrNotFound.
+func (c *Client) GetPostState(ctx context.Context, postID string) (PostState, error) {
+	if !xNumericID(postID) {
+		return PostState{}, fmt.Errorf("%w: postID must be a numeric X ID", ErrInvalidParams)
+	}
+	vars := map[string]interface{}{
+		"tweetId":                postID,
+		"withCommunity":          true,
+		"includePromotedContent": false,
+		"withVoice":              false,
+	}
+	data, err := c.graphqlReadOnce(ctx, "TweetResultByRestId", vars)
+	if err != nil {
+		return PostState{}, err
+	}
+	return parsePostState(data, postID)
+}
+
+// parsePostState reads a TweetResultByRestId data object for postID. A
+// response without the tweetResult root, an unknown result type or a post
+// with another ID is ErrRequestFailed: the state cannot be verified.
+func parsePostState(data json.RawMessage, postID string) (PostState, error) {
+	var payload struct {
+		TweetResult *struct {
+			Result json.RawMessage `json:"result"`
+		} `json:"tweetResult"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return PostState{}, fmt.Errorf("%w: decoding post state: %v", ErrRequestFailed, err)
+	}
+	if payload.TweetResult == nil {
+		return PostState{}, errStateUnverifiable("post state: no tweetResult root")
+	}
+	result := payload.TweetResult.Result
+	if !nonEmptyJSON(result) {
+		return PostState{Kind: PostEmpty}, nil
+	}
+	var head struct {
+		Typename  string `json:"__typename"`
+		Reason    string `json:"reason"`
+		Tombstone *struct {
+			Text struct {
+				Text string `json:"text"`
+			} `json:"text"`
+		} `json:"tombstone"`
+	}
+	if err := json.Unmarshal(result, &head); err != nil {
+		return PostState{}, fmt.Errorf("%w: decoding post state: %v", ErrRequestFailed, err)
+	}
+	switch head.Typename {
+	case "TweetTombstone":
+		state := PostState{Kind: PostTombstone}
+		if head.Tombstone != nil {
+			state.Reason = head.Tombstone.Text.Text
+		}
+		return state, nil
+	case "TweetUnavailable":
+		return PostState{Kind: PostUnavailable, Reason: head.Reason}, nil
+	case "Tweet", "TweetWithVisibilityResults":
+		tweet, ok, err := (tweetResult{Result: result}).tweet()
+		if err != nil {
+			return PostState{}, err
+		}
+		if !ok || tweet.ID != postID {
+			return PostState{}, errStateUnverifiable("post state: result is not the requested post")
+		}
+		viewer, err := postViewerState(result)
+		if err != nil {
+			return PostState{}, err
+		}
+		tweet.Viewer = viewer
+		return PostState{Kind: PostPresent, Tweet: &tweet}, nil
+	default:
+		return PostState{}, errStateUnverifiable("post state: unknown result type")
+	}
+}
+
+// postViewerState reads legacy.favorited, retweeted and bookmarked from a
+// tweet_results.result object. It returns nil unless all three are present.
+func postViewerState(result json.RawMessage) (*PostViewerState, error) {
+	var o tweetObj
+	if err := json.Unmarshal(result, &o); err != nil {
+		return nil, fmt.Errorf("%w: decoding viewer state: %v", ErrRequestFailed, err)
+	}
+	if o.Typename == "TweetWithVisibilityResults" {
+		if o.Tweet == nil {
+			return nil, nil
+		}
+		o = *o.Tweet
+	}
+	l := o.Legacy
+	if l.Favorited == nil || l.Retweeted == nil || l.Bookmarked == nil {
+		return nil, nil
+	}
+	return &PostViewerState{Liked: *l.Favorited, Reposted: *l.Retweeted, Bookmarked: *l.Bookmarked}, nil
+}

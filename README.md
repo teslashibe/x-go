@@ -323,6 +323,46 @@ _ = c.Block(ctx, userID)
 _ = c.Unblock(ctx, userID)
 ```
 
+### Typed write outcomes and state reads
+
+`LikePost`, `UnlikePost`, `Repost`, `Unrepost`, `BookmarkPost`,
+`UnbookmarkPost`, `DeletePost`, `FollowUser`, `UnfollowUser`, `MuteUser`,
+`UnmuteUser`, `BlockUser` and `UnblockUser` take a numeric ID and return an
+`x.WriteResult{Operation, TargetID, State}` only when X confirmed the change.
+Each sends exactly one request, never retries and refuses redirects. Every
+failure is an `*x.OutcomeError` carrying `Operation`, `Status`, `Code`,
+`NotAttempted` (nothing was sent) and `Ambiguous` (the write may have been
+applied), and wraps `x.ErrDefinite` or `x.ErrAmbiguous`.
+
+- A form POST (follow, mute, block and their reverses) is applied only on a
+  200 JSON user whose `id_str` is the target; for `FollowUser`,
+  `follow_request_sent` gives `x.WriteRequested`.
+- A GraphQL write is applied only with no errors and a recorded ack root.
+  No ack root has been captured yet, so today a clean GraphQL response is
+  ambiguous and `{"data":{}}` is always ambiguous.
+- `x.WriteAlreadyInState` is not returned until a recorded code maps to it;
+  code 327 stays `x.ErrAlreadyRetweeted`.
+- A missing query id is `x.ErrQueryIDUnavailable` with no request; a 404
+  without an X error body on a GraphQL path is `x.ErrQueryIDStale`.
+
+The untyped `Like` … `Unblock` and `DeleteTweet` are unchanged.
+
+```go
+res, err := c.FollowUser(ctx, userID)
+var oe *x.OutcomeError
+switch {
+case err == nil:                        // res.State is applied or requested
+case errors.As(err, &oe) && oe.Ambiguous: // read back before doing anything else
+case errors.Is(err, x.ErrRateLimited):  // definite; X throttled the account
+}
+
+state, _ := c.GetPostState(ctx, postID)     // present, tombstone, unavailable or empty
+if state.Kind == x.PostPresent && state.Tweet.Viewer != nil {
+    _ = state.Tweet.Viewer.Liked             // only GetPostState sets Viewer
+}
+rel, _ := c.GetUserRelationship(ctx, userID) // Following, FollowedBy, Muting, ...
+```
+
 ### Direct messages
 
 ```go

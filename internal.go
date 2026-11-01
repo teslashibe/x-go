@@ -166,6 +166,10 @@ type tweetLegacy struct {
 	RetweetedStatusResult *tweetResult      `json:"retweeted_status_result"`
 	IsQuoteStatus         bool              `json:"is_quote_status"`
 	QuotedStatusIDStr     string            `json:"quoted_status_id_str"`
+	// Viewer flags; read only by GetPostState, never by toTweet.
+	Favorited  *bool `json:"favorited"`
+	Retweeted  *bool `json:"retweeted"`
+	Bookmarked *bool `json:"bookmarked"`
 }
 
 type tweetEntities struct {
