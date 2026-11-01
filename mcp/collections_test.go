@@ -164,16 +164,19 @@ func TestExistingPageToolsUnchanged(t *testing.T) {
 	}
 }
 
-// TestCollectionToolsComeLast keeps the older tools in their order.
+// TestCollectionToolsComeLast keeps the older tools in their order: the
+// collection tools follow them, and only the list mutation tools follow the
+// collection tools.
 func TestCollectionToolsComeLast(t *testing.T) {
 	tools := (xmcp.Provider{}).Tools()
-	tail := tools[len(tools)-len(collectionTools):]
+	end := len(tools) - len(listWriteTools)
+	tail := tools[end-len(collectionTools) : end]
 	for _, tl := range tail {
 		if _, ok := collectionTools[tl.Name]; !ok {
 			t.Fatalf("tool %s sits among the collection tools", tl.Name)
 		}
 	}
-	if len(tools) != 45 {
-		t.Fatalf("tools %d, want 45 (39 existing + 6 collection reads)", len(tools))
+	if len(tools) != 52 {
+		t.Fatalf("tools %d, want 52 (39 existing + 6 collection reads + 7 list mutations)", len(tools))
 	}
 }

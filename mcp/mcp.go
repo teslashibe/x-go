@@ -49,7 +49,8 @@ func (Provider) Tools() []mcptool.Tool {
 			len(dmTools)+
 			len(listTools)+
 			len(trendTools)+
-			len(collectionTools),
+			len(collectionTools)+
+			len(listWriteTools),
 	)
 	out = append(out, userTools...)
 	out = append(out, tweetTools...)
@@ -63,5 +64,6 @@ func (Provider) Tools() []mcptool.Tool {
 	out = append(out, listTools...)
 	out = append(out, trendTools...)
 	out = append(out, collectionTools...)
+	out = append(out, listWriteTools...)
 	return out
 }
