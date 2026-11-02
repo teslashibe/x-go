@@ -674,3 +674,20 @@ remapped, timestamps shifted by a random offset and counts perturbed.
 `tweet_detail_synthetic.json` is synthetic, built by the same script from
 those sanitized posts. The script reads its source pages from a file kept
 outside the repository and refuses to write if any original value survives.
+
+## Pre-push hook
+
+`.githooks/pre-push` (generated; see its header) checks what the push changes
+against its merge-base with main: gofmt (only files that become unformatted
+block; files already unformatted on main are reported), `go build` of the
+changed non-main packages and `go vet` of the changed packages (blocking), `go
+vet` of their direct importers when the shared `-trimpath` build cache makes
+that cheap (best effort), and syntax of changed JSON, JS, shell and Python
+files. On a cold build cache it also starts one background warm (nice 19) of
+the pushed tree and of main, so the next push is warm. Budget: 10 s. On camp-1
+it runs through the dispatcher at `/opt/capybara-git/pre-push`, which blocks
+the push on real findings and fails open (warns, logs and pushes) when it
+cannot check: a tool or module missing, a cold build cache, or the budget
+exceeded. The PR checks still gate the merge. Standalone: `git config
+core.hooksPath .githooks`. Bypass only with owner approval: `CAMP_PREPUSH=skip
+git push ...` (logged).
